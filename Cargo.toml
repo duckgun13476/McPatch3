@@ -10,6 +10,7 @@ members = [
 edition = "2021"
 
 [profile.release]
+lto = true
 debug = "line-directives-only"
 split-debuginfo = "packed"
 overflow-checks = true
