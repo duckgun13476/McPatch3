@@ -108,6 +108,12 @@ pub struct GlobalConfig {
     #[default_value("false")]
     pub http_ignore_certificate: bool,
 
+    /// 更新完成后要启动的程序路径
+    /// 留空表示不启动任何程序
+    /// 示例：Plain Craft Launcher 2.exe
+    #[default_value("''")]
+    pub run_after_update: String,
+  
     /// 是否显示控制台（黑窗口）
     /// 如果为false，程序启动时不会显示控制台窗口
     /// 如果为true，会显示控制台窗口，方便调试
@@ -183,6 +189,7 @@ impl GlobalConfig {
         let http_timeout = config["http-timeout"].as_i64().be(|| "配置文件中找不到 http-timeout")? as u32;
         let http_retries = config["http-retries"].as_i64().be(|| "配置文件中找不到 http-retries")? as u8;
         let http_ignore_certificate = config["http-ignore-certificate"].as_bool().be(|| "配置文件中找不到 http-ignore-certificate")?.to_owned();
+        let run_after_update = config["run-after-update"].as_str().be(|| "配置文件中找不到 run-after-update")?.to_owned();
         let show_console = config["show-console"].as_bool().be(|| "配置文件中找不到 show-console")?.to_owned();
 
         Ok(GlobalConfig {
@@ -200,6 +207,7 @@ impl GlobalConfig {
             http_timeout,
             http_retries,
             http_ignore_certificate,
+            run_after_update,
             show_console,
         })
     }

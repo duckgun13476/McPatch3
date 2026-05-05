@@ -670,6 +670,13 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>, allow_error: &mu
         }
     }
 
+    // Launch the configured program after update completes
+    if !config.run_after_update.is_empty() {
+        log_info(format!("Update complete, launching: {}", config.run_after_update));
+        let _ = std::process::Command::new(&config.run_after_update)
+            .spawn();
+    }
+
     Ok(())
 }
 
