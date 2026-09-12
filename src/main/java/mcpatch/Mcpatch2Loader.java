@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.util.List;
 
 public class Mcpatch2Loader {
+    private static final int UPDATE_BLOCKED_EXIT_CODE = 10;
     public static void main(String[] args) throws IOException, InterruptedException {
         entrance();
     }
@@ -87,7 +88,14 @@ public class Mcpatch2Loader {
 
         System.out.println("mcpatch returns: " + exitCode);
 
-        // 如果返回值不是0则崩掉游戏
+        // EXE has already shown an actionable file-operation dialog. End the
+        // launch cleanly instead of converting this expected user-facing stop
+        // into a Java Agent/FML exception.
+        if (exitCode == UPDATE_BLOCKED_EXIT_CODE) {
+            System.exit(exitCode);
+        }
+
+        // Other nonzero exit values still represent an updater fault.
         if (exitCode != 0) {
             throw new RuntimeException("DLL returns " + exitCode + " as exitcode, it's not 0 as expected.");
         }
