@@ -69,6 +69,21 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
         Err(e) => {
             log_error(&e.reason);
 
+            // A local file failure leaves the installed client in its old or partially
+            // applied state. Never let allow-error turn that into a game launch.
+            if let Some(content) = local_file_failure_message(&e.reason) {
+                #[cfg(target_os = "windows")]
+                if params.graphic_mode {
+                    ui_cmd.popup_dialog(DialogContent {
+                        title: "更新被阻止：客户端文件无法处理".to_owned(),
+                        content,
+                        yesno: false,
+                    }).await;
+                }
+
+                return McpatchExitCode(10);
+            }
+
             if params.graphic_mode {
                 #[cfg(target_os = "windows")]
                 {
@@ -96,6 +111,83 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
                 }
             }
         },
+    }
+}
+
+/// Converts known local file-operation failures into an actionable player message.
+/// The detailed reason is retained because it contains the exact affected path.
+fn local_file_failure_message(reason: &str) -> Option<String> {
+    let stage = if reason.contains("获取文件metadata失败") {
+        "检查现有文件"
+    } else if reason.contains("创建临时目录失败") {
+        "创建更新临时目录"
+    } else if reason.contains("打开临时文件失败") || reason.contains("写入临时文件时失败") {
+        "写入下载的临时文件"
+    } else if reason.contains("创建新目录失败") {
+        "创建更新目录"
+    } else if reason.contains("处理文件移动失败") {
+        "移动现有文件"
+    } else if reason.contains("删除旧文件失败") {
+        "删除旧版本文件"
+    } else if reason.contains("移动临时文件失败") {
+        "替换更新文件"
+    } else if reason.contains("更新客户端版本号文件") {
+        "写入客户端版本记录"
+    } else if reason.contains("清理临时目录失败") {
+        "清理更新临时目录"
+    } else {
+        return None;
+    };
+
+    let advice = if reason.contains("os error 32")
+        || reason.contains("code: 32")
+        || reason.contains("文件被另一个进程")
+        || reason.contains("being used by another process")
+    {
+        "目标文件正在被其他程序使用。请完全关闭 Minecraft、启动器和同一客户端目录的其他窗口后，再重新启动客户端。"
+    } else if reason.contains("os error 5")
+        || reason.contains("code: 5")
+        || reason.contains("Permission denied")
+        || reason.contains("Access is denied")
+    {
+        "当前 Windows 账户没有该客户端目录的读写权限。请检查客户端文件夹权限，且不要把客户端放在受保护的系统目录。"
+    } else {
+        "客户端目录无法正常读写。请确认磁盘可用、路径存在，并关闭可能正在使用该目录的程序后重试。"
+    };
+
+    Some(format!(
+        "更新没有完成，Minecraft 不会启动。\r\n\r\n失败阶段：{stage}\r\n\r\n{advice}\r\n\r\n详细错误（可发给管理员）：\r\n{reason}"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_file_failure_message;
+
+    #[test]
+    fn classifies_locked_file_with_actionable_guidance() {
+        let message = local_file_failure_message(
+            "删除旧文件失败(\\\"mods/example.jar\\\")，原因：Os { code: 32, kind: PermissionDenied }",
+        ).expect("file operation must be classified");
+
+        assert!(message.contains("删除旧版本文件"));
+        assert!(message.contains("其他程序使用"));
+        assert!(message.contains("mods/example.jar"));
+    }
+
+    #[test]
+    fn classifies_access_denied_with_permission_guidance() {
+        let message = local_file_failure_message(
+            "移动临时文件失败(\\\"temp\\\" => \\\"mods/example.jar\\\")，原因：Os { code: 5, kind: PermissionDenied }",
+        ).expect("file operation must be classified");
+
+        assert!(message.contains("替换更新文件"));
+        assert!(message.contains("目录的读写权限"));
+    }
+
+    #[test]
+    fn leaves_network_failures_on_the_normal_error_path() {
+        assert!(local_file_failure_message("服务端连接超时").is_none());
     }
 }
 
