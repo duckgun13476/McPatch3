@@ -38,10 +38,9 @@ pub struct GlobalConfig {
     #[default_value("version-label.txt")]
     pub version_file_path: String,
 
-    /// 当程序发生错误而更新失败时，是否可以继续进入游戏
-    /// 如果为true，发生错误时会忽略错误，正常启动游戏，但是可能会因为某些新模组未下载无法进服
-    /// 如果为false，发生错误时会直接崩溃掉Minecraft进程，停止游戏启动过程
-    /// 此选项仅当程序以非图形模式启动时有效，因为在图形模式下，会主动弹框并将选择权交给用户
+    /// 旧版兼容字段。更新前的网络、协议、完整性、配置和文件错误都不能忽略，
+    /// 因为更新器无法确认客户端文件是否一致。该字段保留为兼容旧配置，
+    /// 但不再允许这些关键错误继续启动 Minecraft。
     #[default_value("false")]
     pub allow_error: bool,
 

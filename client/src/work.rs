@@ -57,10 +57,8 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
     };
     add_log_handler(Box::new(ConsoleHandler::new(console_log_level)));
 
-    let mut allow_error = false;
-
     // 将更新主逻辑单独拆到一个方法里以方便处理错误
-    match work(&params, ui_cmd, &mut allow_error).await {
+    match work(&params, ui_cmd).await {
         Ok(_) => {
             log_info("finish");
 
@@ -69,135 +67,180 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
         Err(e) => {
             log_error(&e.reason);
 
-            // A local file failure leaves the installed client in its old or partially
-            // applied state. Never let allow-error turn that into a game launch.
-            if let Some(content) = local_file_failure_message(&e.reason) {
-                #[cfg(target_os = "windows")]
-                if params.graphic_mode {
-                    ui_cmd.popup_dialog(DialogContent {
-                        title: "更新被阻止：客户端文件无法处理".to_owned(),
-                        content,
-                        yesno: false,
-                    }).await;
-                }
-
-                return McpatchExitCode(10);
-            }
-
+            // Every pre-launch update failure is blocking. Launching a client whose
+            // version or files cannot be verified is unsafe.
+            let (title, content) = update_failure_dialog(&e.reason);
+            #[cfg(target_os = "windows")]
             if params.graphic_mode {
-                #[cfg(target_os = "windows")]
-                {
-                    let choice = ui_cmd.popup_dialog(DialogContent {
-                        title: "Error".to_owned(),
-                        content: format!("{}\n\n确定：忽略错误继续启动\n取消：终止启动过程并报错", e.reason),
-                        yesno: true,
-                    }).await;
-
-                    match choice {
-                        true => McpatchExitCode(0),
-                        false => McpatchExitCode(1),
-                    }
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                match allow_error {
-                    true => McpatchExitCode(0),
-                    false => McpatchExitCode(1),
-                }
-            } else {
-                match allow_error {
-                    true => McpatchExitCode(0),
-                    false => McpatchExitCode(1),
-                }
+                ui_cmd.popup_dialog(DialogContent {
+                    title,
+                    content,
+                    yesno: false,
+                }).await;
             }
+
+            McpatchExitCode(10)
         },
     }
 }
 
-/// Converts known local file-operation failures into an actionable player message.
-/// The detailed reason is retained because it contains the exact affected path.
-fn local_file_failure_message(reason: &str) -> Option<String> {
-    let stage = if reason.contains("获取文件metadata失败") || reason.contains("打开文件失败") {
-        "检查现有文件"
+/// Produces a player-facing, blocking explanation for every update failure.
+/// The detailed reason is retained because it contains the exact path or source.
+fn update_failure_dialog(reason: &str) -> (String, String) {
+    let local_stage = if reason.contains("获取文件metadata失败") || reason.contains("打开文件失败") {
+        Some("检查现有文件")
     } else if reason.contains("创建临时目录失败") {
-        "创建更新临时目录"
-    } else if reason.contains("打开临时文件失败") || reason.contains("写入临时文件时失败") {
-        "写入下载的临时文件"
+        Some("创建更新临时目录")
+    } else if reason.contains("打开临时文件失败") || reason.contains("写入临时文件时失败") || reason.contains("刷新临时文件失败") || reason.contains("归零临时文件读写指针失败") {
+        Some("写入下载的临时文件")
     } else if reason.contains("创建新目录失败") {
-        "创建更新目录"
+        Some("创建更新目录")
     } else if reason.contains("处理文件移动失败") {
-        "移动现有文件"
+        Some("移动现有文件")
     } else if reason.contains("删除旧文件失败") {
-        "删除旧版本文件"
+        Some("删除旧版本文件")
     } else if reason.contains("移动临时文件失败") {
-        "替换更新文件"
+        Some("替换更新文件")
     } else if reason.contains("更新客户端版本号文件") {
-        "写入客户端版本记录"
+        Some("写入客户端版本记录")
     } else if reason.contains("清理临时目录失败") {
-        "清理更新临时目录"
+        Some("清理更新临时目录")
     } else {
-        return None;
+        None
     };
 
-    let advice = if reason.contains("os error 32")
+    if let Some(stage) = local_stage {
+        let advice = if reason.contains("os error 32")
         || reason.contains("code: 32")
         || reason.contains("文件被另一个进程")
         || reason.contains("being used by another process")
-    {
-        "目标文件正在被其他程序使用。请完全关闭 Minecraft、启动器和同一客户端目录的其他窗口后，再重新启动客户端。"
-    } else if reason.contains("os error 5")
+        {
+            "目标文件正在被其他程序使用。请完全关闭 Minecraft、启动器和同一客户端目录的其他窗口后，再重新启动客户端。"
+        } else if reason.contains("os error 5")
         || reason.contains("code: 5")
         || reason.contains("Permission denied")
         || reason.contains("Access is denied")
+        {
+            "当前 Windows 账户没有该客户端目录的读写权限。请检查客户端文件夹权限，且不要把客户端放在受保护的系统目录。"
+        } else {
+            "客户端目录无法正常读写。请确认磁盘可用、路径存在，并关闭可能正在使用该目录的程序后重试。"
+        };
+
+        return (
+            "更新被阻止：客户端文件无法处理".to_owned(),
+            format!("更新没有完成，Minecraft 不会启动。\r\n\r\n失败阶段：{stage}\r\n\r\n{advice}\r\n\r\n详细错误（可发给管理员）：\r\n{reason}"),
+        );
+    }
+
+    let (title, summary, advice) = if reason.contains("服务器地址加载失败")
+        || reason.contains("没有有效的服务器地址可以使用")
+        || reason.contains("配置文件")
+        || reason.contains(".minecraft not found")
+        || reason.contains("创建更新起始目录失败")
+        || reason.contains("获取exe文件路径失败")
+        || reason.contains("获取工作目录失败")
     {
-        "当前 Windows 账户没有该客户端目录的读写权限。请检查客户端文件夹权限，且不要把客户端放在受保护的系统目录。"
+        (
+            "更新被阻止：客户端配置或路径异常",
+            "更新器无法确定正确的客户端目录或更新源。",
+            "请不要移动更新器文件。检查客户端目录是否完整；若仍然出现，请把下方详细错误发给管理员。",
+        )
+    } else if reason.contains("元数据解析失败")
+        || reason.contains("版本号")
+        || reason.contains("服务端还没有打包")
+        || reason.contains("the temp file hash")
+        || reason.contains("content-length")
+        || reason.contains("状态码")
+        || reason.contains("返回的数据格式不正确")
+    {
+        (
+            "更新被阻止：更新包或协议不兼容",
+            "更新器收到了无法安全解析或校验的更新数据。",
+            "这可能是更新器过旧、更新包不完整或服务端正在发布。请稍后重试；持续出现时将详细错误发给管理员。",
+        )
+    } else if reason.contains("检查更新失败")
+        || reason.contains("元数据下载失败")
+        || reason.contains("文件下载失败")
+        || reason.contains("服务器(")
+        || reason.contains("私有协议")
+        || reason.contains("连接")
+        || reason.contains("timeout")
+        || reason.contains("TimedOut")
+    {
+        (
+            "更新被阻止：无法连接更新源",
+            "更新器在自动重试后仍无法可靠获取更新数据。",
+            "请检查网络后重新启动客户端。不要在无法确认版本一致时进入游戏；持续出现时将详细错误发给管理员。",
+        )
     } else {
-        "客户端目录无法正常读写。请确认磁盘可用、路径存在，并关闭可能正在使用该目录的程序后重试。"
+        (
+            "更新被阻止：更新器发生未识别错误",
+            "更新没有被完整验证，因此 Minecraft 不会启动。",
+            "请重新启动客户端一次；若仍然出现，请将下方详细错误发给管理员。",
+        )
     };
 
-    Some(format!(
-        "更新没有完成，Minecraft 不会启动。\r\n\r\n失败阶段：{stage}\r\n\r\n{advice}\r\n\r\n详细错误（可发给管理员）：\r\n{reason}"
-    ))
+    (
+        title.to_owned(),
+        format!("{summary}\r\n\r\n{advice}\r\n\r\n详细错误（可发给管理员）：\r\n{reason}"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::local_file_failure_message;
+    use super::update_failure_dialog;
 
     #[test]
     fn classifies_locked_file_with_actionable_guidance() {
-        let message = local_file_failure_message(
+        let dialog = update_failure_dialog(
             "打开文件失败(\\\"mods/example.jar\\\")，原因：Os { code: 32, kind: Uncategorized }",
-        ).expect("file operation must be classified");
+        );
 
-        assert!(message.contains("检查现有文件"));
-        assert!(message.contains("其他程序使用"));
-        assert!(message.contains("mods/example.jar"));
+        assert_eq!(dialog.0, "更新被阻止：客户端文件无法处理");
+        assert!(dialog.1.contains("检查现有文件"));
+        assert!(dialog.1.contains("其他程序使用"));
+        assert!(dialog.1.contains("mods/example.jar"));
     }
 
     #[test]
     fn classifies_access_denied_with_permission_guidance() {
-        let message = local_file_failure_message(
+        let dialog = update_failure_dialog(
             "移动临时文件失败(\\\"temp\\\" => \\\"mods/example.jar\\\")，原因：Os { code: 5, kind: PermissionDenied }",
-        ).expect("file operation must be classified");
+        );
 
-        assert!(message.contains("替换更新文件"));
-        assert!(message.contains("目录的读写权限"));
+        assert!(dialog.1.contains("替换更新文件"));
+        assert!(dialog.1.contains("目录的读写权限"));
     }
 
     #[test]
-    fn leaves_network_failures_on_the_normal_error_path() {
-        assert!(local_file_failure_message("服务端连接超时").is_none());
+    fn classifies_network_failures_as_blocking() {
+        let dialog = update_failure_dialog("检查更新失败，原因：连接 timeout");
+
+        assert_eq!(dialog.0, "更新被阻止：无法连接更新源");
+        assert!(dialog.1.contains("自动重试后"));
+    }
+
+    #[test]
+    fn classifies_protocol_failures_as_blocking() {
+        let dialog = update_failure_dialog("版本 7.7.1 的元数据解析失败，原因：Unexpected token");
+
+        assert_eq!(dialog.0, "更新被阻止：更新包或协议不兼容");
+        assert!(dialog.1.contains("更新器过旧"));
+    }
+
+    #[test]
+    fn keeps_unknown_failures_blocking() {
+        let dialog = update_failure_dialog("unclassified updater failure");
+
+        assert_eq!(dialog.0, "更新被阻止：更新器发生未识别错误");
     }
 }
 
-pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>, allow_error: &mut bool) -> Result<(), BusinessError> {
+pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), BusinessError> {
     let working_dir = get_working_dir(params).await?;
     let exe_dir = get_executable_dir(params).await?;
     let config = GlobalConfig::load(&exe_dir.join("mcpatch.yml")).await?;
     let base_dir = get_base_dir(params, &config).await?;
-
-    *allow_error = config.allow_error;
 
     // 根据配置显示或隐藏控制台窗口
     #[cfg(target_os = "windows")]
