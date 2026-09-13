@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::app_path::AppPath;
+use crate::core::data::ui_profile::ensure_ui_profile;
 use crate::config::builtin_server_config::BuiltinServerConfig;
 use crate::config::core_config::CoreConfig;
 use crate::config::s3_config::S3Config;
@@ -37,6 +38,7 @@ pub struct Config {
 
 impl Config {
     pub async fn load(app_path: &AppPath) -> Self {
+        ensure_ui_profile(&app_path.ui_profile_file).expect("failed to initialize updater UI profile");
         let exist = tokio::fs::try_exists(&app_path.config_file).await.unwrap();
 
         // 生成默认配置文件

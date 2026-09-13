@@ -20,6 +20,9 @@ pub struct AppPath {
     /// 索引文件路径。用来识别当前有哪些更新包
     pub index_file: PathBuf,
 
+    /// 客户端更新界面资料。此文件由公开目录直接提供，管理员可自行修改。
+    pub ui_profile_file: PathBuf,
+
     /// 配置文件路径。用来存储管理端的配置项目
     pub config_file: PathBuf,
 
@@ -40,6 +43,7 @@ impl AppPath {
         let public_dir = working_dir.join("public");
         let web_dir = working_dir.join("webpage");
         let index_file = working_dir.join("public/index.json");
+        let ui_profile_file = working_dir.join("public/ui-profile.json");
         let config_file = working_dir.join("config.toml");
         let auth_file = working_dir.join("user.toml");
 
@@ -52,6 +56,7 @@ impl AppPath {
             public_dir,
             web_dir,
             index_file,
+            ui_profile_file,
             config_file,
             auth_file,
         }

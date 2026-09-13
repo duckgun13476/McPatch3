@@ -18,6 +18,13 @@ use crate::web::log::Console;
 
 
 pub fn task_pack(version_label: String, change_logs: String, apppath: &AppPath, config: &Config, console: &Console) -> u8 {
+    let version_label = version_label.trim().to_owned();
+
+    if version_label.is_empty() {
+        console.log_error("版本号不能为空");
+        return 1;
+    }
+
     // 读取更新日志
     let change_logs = match change_logs.is_empty() {
         false => change_logs,

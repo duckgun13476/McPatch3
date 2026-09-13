@@ -151,10 +151,29 @@ impl IndexFile {
         
         for v in &self.versions {
             let cache_key = format!("{}|{}|{}", v.filename, v.offset, v.len);
-            let group = reading_cache.get(&cache_key).unwrap();
-            let meta = group.find_meta(&v.label).unwrap();
+            let group = reading_cache
+                .get(&cache_key)
+                .unwrap_or_else(|| panic!("metadata group not found: {}", cache_key));
+            let meta = group
+                .find_meta(&v.label)
+                .or_else(|| group.0.iter().find(|e| e.label.trim() == v.label.trim()))
+                .unwrap_or_else(|| {
+                    let labels = group
+                        .0
+                        .iter()
+                        .map(|e| e.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    panic!(
+                        "metadata label not found: label={}, file={}, offset={}, length={}, group_labels=[{}]",
+                        v.label, v.filename, v.offset, v.len, labels
+                    )
+                });
+            let mut meta = meta.to_owned();
+            meta.label = v.label.clone();
             
-            metas.push((v.clone(), meta.to_owned()));
+            metas.push((v.clone(), meta));
         }
 
         metas
