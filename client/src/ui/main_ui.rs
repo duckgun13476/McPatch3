@@ -47,24 +47,45 @@ enum Command {
 /// 应用程序的主窗口，负责大部分信息反馈和交互
 #[derive(NwgUi)]
 pub struct MainWindow {
-    #[nwg_control(size: (520, 150), flags: "WINDOW", center: true, topmost: false)]
+    #[nwg_control(size: (560, 220), title: "松饼小镇更新器", flags: "WINDOW", center: true, topmost: false)]
     #[nwg_events(OnWindowClose: [MainWindow::close])]
     window: nwg::Window,
 
-    #[nwg_control(position: (2, 15), size: (516, 24), text: "Label", 
-        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Center, 
-        // background_color: Some([255, 0, 255])
-    )]
+    #[nwg_resource(family: "Microsoft YaHei UI", size: 18, weight: 700)]
+    brand_font: nwg::Font,
+
+    #[nwg_resource(family: "Microsoft YaHei UI", size: 11, weight: 500)]
+    body_font: nwg::Font,
+
+    #[nwg_resource(family: "Microsoft YaHei UI", size: 10, weight: 400)]
+    hint_font: nwg::Font,
+
+    #[nwg_control(position: (22, 18), size: (516, 30), text: "齿轮の松饼小镇", font: Some(&data.brand_font),
+        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Left)]
+    brand: nwg::Label,
+
+    #[nwg_control(position: (22, 48), size: (516, 22), text: "正在安全检查客户端更新", font: Some(&data.body_font),
+        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Left)]
+    phase: nwg::Label,
+
+    #[nwg_control(position: (22, 82), size: (430, 28), text: "准备更新", font: Some(&data.body_font),
+        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Left)]
     label: nwg::Label,
 
-    #[nwg_control(position: (2, 55), size: (516, 24), text: "Label Secondary", 
-        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Center, 
-        // background_color: Some([0, 255, 255])
-    )]
+    #[nwg_control(position: (452, 82), size: (86, 28), text: "0%", font: Some(&data.body_font),
+        flags: "VISIBLE", h_align: HTextAlign::Right)]
+    progress_text: nwg::Label,
+
+    #[nwg_control(position: (22, 112), size: (516, 25), text: "正在准备下载文件", font: Some(&data.hint_font),
+        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Left)]
     label_secondary: nwg::Label,
 
-    #[nwg_control(position: (35, 110), size: (450, 20), range: 0..1000)]
+    #[nwg_control(position: (22, 148), size: (516, 20), range: 0..1000)]
     progress: nwg::ProgressBar,
+
+    #[nwg_control(position: (22, 178), size: (516, 20), text: "更新期间请保持此窗口开启。完成后将自动启动客户端。", font: Some(&data.hint_font),
+        flags: "VISIBLE|ELIPSIS", h_align: HTextAlign::Left)]
+    hint: nwg::Label,
 
     #[nwg_control]
     #[nwg_events(OnNotice: [MainWindow::on_noticed])]
@@ -81,9 +102,16 @@ impl MainWindow {
         
         let data = Self {
             window: Default::default(),
+            brand_font: Default::default(),
+            body_font: Default::default(),
+            hint_font: Default::default(),
+            brand: Default::default(),
+            phase: Default::default(),
             label: Default::default(),
+            progress_text: Default::default(),
             label_secondary: Default::default(),
             progress: Default::default(),
+            hint: Default::default(),
             notice: Default::default(),
             commands: RefCell::new(commands),
             dialog_result,
@@ -126,10 +154,12 @@ impl MainWindow {
                     self.window.set_text(&title);
                 },
                 Command::SetLabel(label) => {
+                    self.phase.set_text(Self::phase_for_status(&label));
                     self.label.set_text(&label);
                 },
                 Command::SetProgress(progress) => {
                     self.progress.set_pos(progress);
+                    self.progress_text.set_text(&format!("{}%", progress / 10));
                 },
                 Command::SetLabelSecondary(label) => {
                     self.label_secondary.set_text(&label);
@@ -162,6 +192,20 @@ impl MainWindow {
     
     fn close(&self) {
         nwg::stop_thread_dispatch();
+    }
+
+    fn phase_for_status(status: &str) -> &'static str {
+        if status.contains("下载") {
+            "正在下载更新"
+        } else if status.contains("移动") || status.contains("处理") || status.contains("清理") || status.contains("收尾") {
+            "正在应用更新"
+        } else if status.contains("没有更新") {
+            "客户端已是最新版本"
+        } else if status.contains("检查") || status.contains("收集") || status.contains("元数据") {
+            "正在检查更新"
+        } else {
+            "正在准备更新"
+        }
     }
 }
 
