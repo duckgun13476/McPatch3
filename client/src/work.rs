@@ -117,7 +117,7 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
 /// Converts known local file-operation failures into an actionable player message.
 /// The detailed reason is retained because it contains the exact affected path.
 fn local_file_failure_message(reason: &str) -> Option<String> {
-    let stage = if reason.contains("获取文件metadata失败") {
+    let stage = if reason.contains("获取文件metadata失败") || reason.contains("打开文件失败") {
         "检查现有文件"
     } else if reason.contains("创建临时目录失败") {
         "创建更新临时目录"
@@ -167,10 +167,10 @@ mod tests {
     #[test]
     fn classifies_locked_file_with_actionable_guidance() {
         let message = local_file_failure_message(
-            "删除旧文件失败(\\\"mods/example.jar\\\")，原因：Os { code: 32, kind: PermissionDenied }",
+            "打开文件失败(\\\"mods/example.jar\\\")，原因：Os { code: 32, kind: Uncategorized }",
         ).expect("file operation must be classified");
 
-        assert!(message.contains("删除旧版本文件"));
+        assert!(message.contains("检查现有文件"));
         assert!(message.contains("其他程序使用"));
         assert!(message.contains("mods/example.jar"));
     }
