@@ -23,5 +23,6 @@
 
 pub mod version_meta;
 pub mod index_file;
+pub mod pending_changes;
 pub mod ui_profile;
 pub mod version_meta_group;

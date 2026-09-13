@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use crate::app_path::AppPath;
 use crate::config::auth_config::AuthConfig;
 use crate::config::Config;
+use crate::core::data::pending_changes::PendingChanges;
 use crate::web::file_status::FileStatus;
 use crate::web::log::Console;
 use crate::web::task_executor::LongTimeExecutor;
@@ -18,10 +19,14 @@ pub struct WebState {
     pub console: Console,
     pub te: Arc<Mutex<LongTimeExecutor>>,
     pub status: Arc<Mutex<FileStatus>>,
+    pub pending_changes: Arc<Mutex<PendingChanges>>,
 }
 
 impl WebState {
     pub fn new(app_path: AppPath, config: Config, auth: AuthConfig) -> Self {
+        let pending_changes = PendingChanges::load(&app_path.pending_changes_file)
+            .expect("failed to load pending changes");
+
         Self {
             apppath: app_path.clone(),
             config: config.clone(),
@@ -29,6 +34,7 @@ impl WebState {
             console: Console::new_webui(),
             te: Arc::new(Mutex::new(LongTimeExecutor::new())),
             status: Arc::new(Mutex::new(FileStatus::new(app_path, config))),
+            pending_changes: Arc::new(Mutex::new(pending_changes)),
         }
     }
 }

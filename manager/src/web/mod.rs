@@ -29,6 +29,7 @@ use crate::web::api::fs::r#move::api_move;
 use crate::web::api::fs::sign_file::api_sign_file;
 use crate::web::api::misc::version_list::api_version_list;
 use crate::web::api::public::api_public;
+use crate::web::api::task::changes::{api_add_delete_file, api_remove_delete_file};
 use crate::web::api::task::check::api_status;
 use crate::web::api::task::combine::api_combine;
 use crate::web::api::task::pack::api_pack;
@@ -136,6 +137,8 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/task/test", post(api_test))
         .route("/api/task/combine", post(api_combine))
         .route("/api/task/pack", post(api_pack))
+        .route("/api/task/change/delete-file", post(api_add_delete_file))
+        .route("/api/task/change/remove-delete-file", post(api_remove_delete_file))
         .route("/api/task/revert", post(api_revert))
         .route("/api/task/upload", post(api_upload_api))
 

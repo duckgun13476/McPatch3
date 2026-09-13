@@ -1,9 +1,15 @@
 import instance from "@/utils/request.js";
 
-export const taskPackRequest = (label, changeLogs) => instance.post('/task/pack', {
+export const taskPackRequest = (label, changeLogs, confirmationFingerprint = null, excludedChangeIds = []) => instance.post('/task/pack', {
   label: label,
-  change_logs: changeLogs
+  change_logs: changeLogs,
+  confirmation_fingerprint: confirmationFingerprint,
+  excluded_change_ids: excludedChangeIds
 })
+
+export const taskAddDeleteFileRequest = (path) => instance.post('/task/change/delete-file', {path})
+
+export const taskRemoveDeleteFileRequest = (path) => instance.post('/task/change/remove-delete-file', {path})
 
 export const taskCombineRequest = () => instance.post('/task/combine', {})
 

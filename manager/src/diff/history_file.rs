@@ -176,11 +176,18 @@ impl HistoryFile {
 
     /// 复现一个“删除文件”或者“删除目录”的操作
     pub fn delete_file_or_directory(&self, path: &str) {
-        let (parent, end) = self.lookup_parent_and_end(path);
-        
-        let holding = parent.children.borrow_mut().remove(end).unwrap();
+        let (parent, end) = if let Some((parent_path, end)) = path.rsplit_once("/") {
+            let Some(parent) = self.find(parent_path) else {
+                return;
+            };
+            (parent, end)
+        } else {
+            (self.clone(), path)
+        };
 
-        assert!(holding.children.borrow().is_empty());
+        if let Some(holding) = parent.children.borrow_mut().remove(end) {
+            assert!(holding.children.borrow().is_empty());
+        };
     }
 
     /// 获取文件在更新包中的位置
@@ -260,6 +267,19 @@ impl AbstractFile for HistoryFile {
 
     fn find(&self, path: &str) -> Option<Self> {
         find_file_helper(self, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HistoryFile;
+    use crate::diff::abstract_file::AbstractFile;
+
+    #[test]
+    fn deleting_an_unknown_nested_path_is_idempotent() {
+        let history = HistoryFile::new_empty();
+        history.delete_file_or_directory(".minecraft/mods/unknown-old.jar");
+        assert!(history.find(".minecraft/mods/unknown-old.jar").is_none());
     }
 }
 

@@ -1,14 +1,15 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Button, Input, message, Modal, Popconfirm, Popover, Select} from "antd";
+import {Button, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip} from "antd";
 import {
-  taskCombineRequest, taskPackRequest,
+  taskAddDeleteFileRequest,
+  taskCombineRequest, taskPackRequest, taskRemoveDeleteFileRequest,
   taskRevertRequest,
   taskTestRequest,
   taskUploadRequest,
   taskStatusRequest
 } from "@/api/task.js";
 import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
-import {RotateCcw} from "lucide-react";
+import {Plus, RotateCcw, Undo2, X} from "lucide-react";
 import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
 
@@ -68,6 +69,10 @@ const Index = () => {
   const [updateRecord, setUpdateRecord] = useState('');
   const [refreshInterval, setRefreshInterval] = useState(parseInt(localStorage.getItem('logRefreshInterval')) || options[0].value);
   const [versionList, setVersionList] = useState([])
+  const [packPreview, setPackPreview] = useState(null)
+  const [excludedChangeIds, setExcludedChangeIds] = useState([])
+  const [deletePath, setDeletePath] = useState('')
+  const [packLoading, setPackLoading] = useState(false)
   const logsRef = useRef(null);
   const [messageApi, contextHolder] = message.useMessage();
 
@@ -121,19 +126,106 @@ const Index = () => {
     }
   }
 
+  const loadPackPreview = async (tempVersion, tempUpdateRecord) => {
+    const {code, msg, data} = await taskPackRequest(tempVersion, tempUpdateRecord)
+    if (code !== 1) {
+      messageApi.error(msg)
+      return false
+    }
+    setPackPreview(data)
+    setExcludedChangeIds([])
+    return true
+  }
+
   const taskPack = async () => {
     const tempVersion = version === '' ? generateRandomStr() : version
     const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
 
-    const {code, msg, data} = await taskPackRequest(tempVersion, tempUpdateRecord);
-    if (code === 1) {
-      await miscVersionList()
-      messageApi.success('打包成功.')
-    } else {
-      messageApi.error(msg)
+    if (version === '') {
+      setVersion(tempVersion)
     }
-    setPackShow(false)
+
+    setPackLoading(true)
+    try {
+      if (packPreview === null) {
+        await loadPackPreview(tempVersion, tempUpdateRecord)
+        return
+      }
+
+      const {code, msg} = await taskPackRequest(
+        tempVersion,
+        tempUpdateRecord,
+        packPreview.fingerprint,
+        excludedChangeIds
+      )
+      if (code === 1) {
+        messageApi.success('打包任务已提交。')
+        closePackDialog()
+      } else {
+        messageApi.error(msg)
+        setPackPreview(null)
+        setExcludedChangeIds([])
+      }
+    } finally {
+      setPackLoading(false)
+    }
   }
+
+  const addDeleteChange = async () => {
+    if (deletePath.trim() === '') {
+      messageApi.warning('请输入需要从客户端删除的相对路径。')
+      return
+    }
+    const {code, msg} = await taskAddDeleteFileRequest(deletePath.trim())
+    if (code !== 1) {
+      messageApi.error(msg)
+      return
+    }
+    setDeletePath('')
+    setPackPreview(null)
+    setExcludedChangeIds([])
+    messageApi.success('已加入客户端删除指令。')
+  }
+
+  const removeChange = async (change) => {
+    if (change.explicit && change.operation === 'delete-file') {
+      const {code, msg} = await taskRemoveDeleteFileRequest(change.path)
+      if (code !== 1) {
+        messageApi.error(msg)
+        return
+      }
+      const tempVersion = version === '' ? generateRandomStr() : version
+      const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
+      await loadPackPreview(tempVersion, tempUpdateRecord)
+      return
+    }
+    setExcludedChangeIds(current => current.includes(change.id) ? current : [...current, change.id])
+  }
+
+  const closePackDialog = () => {
+    setPackShow(false)
+    setPackPreview(null)
+    setExcludedChangeIds([])
+    setDeletePath('')
+  }
+
+  const operationLabel = (operation) => ({
+    'create-directory': '新增目录',
+    'update-file': '新增或更新',
+    'move-file': '移动',
+    'delete-file': '删除文件',
+    'delete-directory': '删除目录'
+  }[operation] || operation)
+
+  const operationColor = (operation) => ({
+    'create-directory': 'green',
+    'update-file': 'blue',
+    'move-file': 'gold',
+    'delete-file': 'red',
+    'delete-directory': 'red'
+  }[operation] || 'default')
+
+  const visiblePackChanges = packPreview?.changes.filter(change => !excludedChangeIds.includes(change.id)) || []
 
   const taskCombine = async () => {
     const {code, msg, data} = await taskCombineRequest();
@@ -244,27 +336,82 @@ const Index = () => {
         </div>
       </div>
       <Modal
-        title="打包"
-        okText="确认"
+        title={packPreview === null ? "打包新版本" : "确认本次文件变化"}
+        width={780}
+        okText={packPreview === null ? "查看变化" : "确认并打包"}
         cancelText="取消"
         open={packShow}
+        confirmLoading={packLoading}
+        okButtonProps={{disabled: packPreview !== null && visiblePackChanges.length === 0}}
         onOk={taskPack}
-        onCancel={() => setPackShow(false)}>
-        <div>
-          <div className="text-base text-gray-400">版本号与详情均可不填,使用默认参数.</div>
-          <Input
-            className="mt-5"
-            placeholder="请输入版本号."
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}/>
-          <TextArea
-            className="mt-2 mb-5"
-            placeholder="请输入更新记录."
-            autoSize={{maxRows: 10, minRows: 4}}
-            maxLength={4000}
-            value={updateRecord}
-            onChange={(e) => setUpdateRecord(e.target.value)}/>
-        </div>
+        onCancel={closePackDialog}>
+        {packPreview === null ? (
+          <div>
+            <div className="text-base text-gray-400">首次确认只生成变化预览，不会立即打包。</div>
+            <Input
+              className="mt-5"
+              placeholder="请输入版本号。"
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}/>
+            <TextArea
+              className="mt-2"
+              placeholder="请输入更新记录。"
+              autoSize={{maxRows: 10, minRows: 4}}
+              maxLength={4000}
+              value={updateRecord}
+              onChange={(e) => setUpdateRecord(e.target.value)}/>
+            <div className="mt-5 text-sm font-medium text-gray-700">直接删除客户端文件</div>
+            <div className="mt-2 flex gap-2">
+              <Input
+                placeholder="例如 .minecraft/mods/old-version.jar"
+                value={deletePath}
+                onPressEnter={addDeleteChange}
+                onChange={(e) => setDeletePath(e.target.value)}/>
+              <Tooltip title="加入删除指令">
+                <Button icon={<Plus size={18}/>} onClick={addDeleteChange}/>
+              </Tooltip>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-3 flex items-center justify-between text-sm text-gray-500">
+              <span>共 {packPreview.changes.length} 项，已排除 {excludedChangeIds.length} 项</span>
+              {excludedChangeIds.length > 0 && (
+                <Button type="text" icon={<Undo2 size={16}/>} onClick={() => setExcludedChangeIds([])}>恢复全部</Button>
+              )}
+            </div>
+            <div className="max-h-[430px] overflow-y-auto pr-1">
+              {visiblePackChanges.map(change => (
+                <div key={change.id} className="relative mb-2 rounded-md border border-gray-200 px-3 py-3 pr-12">
+                  <div className="flex items-center gap-2">
+                    <Tag color={operationColor(change.operation)}>{operationLabel(change.operation)}</Tag>
+                    {change.explicit && <Tag>显式指令</Tag>}
+                  </div>
+                  <div className="mt-2 break-all font-mono text-sm text-gray-800">
+                    {change.operation === 'move-file' ? `${change.from} -> ${change.to}` : change.path}
+                  </div>
+                  {(change.hash || change.len !== null) && (
+                    <div className="mt-1 break-all text-xs text-gray-400">
+                      {change.len !== null && `${showFileSize(change.len)} `}{change.hash || ''}
+                    </div>
+                  )}
+                  <Tooltip title={change.explicit ? "撤销这条删除指令" : "本次不打包此项"}>
+                    <Button
+                      type="text"
+                      danger
+                      aria-label="移除此项变化"
+                      className="absolute right-2 top-2"
+                      icon={<X size={18}/>}
+                      onClick={() => removeChange(change)}/>
+                  </Tooltip>
+                </div>
+              ))}
+              {visiblePackChanges.length === 0 && (
+                <div className="py-12 text-center text-gray-400">没有选中的文件变化</div>
+              )}
+            </div>
+          </div>
+        )}
       </Modal>
     </>
   );

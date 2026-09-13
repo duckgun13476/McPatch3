@@ -23,6 +23,9 @@ pub struct AppPath {
     /// 客户端更新界面资料。此文件由公开目录直接提供，管理员可自行修改。
     pub ui_profile_file: PathBuf,
 
+    /// 管理端显式维护的客户端删除规则。
+    pub pending_changes_file: PathBuf,
+
     /// 配置文件路径。用来存储管理端的配置项目
     pub config_file: PathBuf,
 
@@ -44,6 +47,7 @@ impl AppPath {
         let web_dir = working_dir.join("webpage");
         let index_file = working_dir.join("public/index.json");
         let ui_profile_file = working_dir.join("public/ui-profile.json");
+        let pending_changes_file = working_dir.join("pending-changes.json");
         let config_file = working_dir.join("config.toml");
         let auth_file = working_dir.join("user.toml");
 
@@ -57,6 +61,7 @@ impl AppPath {
             web_dir,
             index_file,
             ui_profile_file,
+            pending_changes_file,
             config_file,
             auth_file,
         }
