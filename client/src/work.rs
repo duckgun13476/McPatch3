@@ -603,10 +603,12 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
                 }
             }
             for deletion in &meta.metadata.client_hash_deletions {
-                if !hash_deletions
-                    .iter()
-                    .any(|existing| existing.sha256 == deletion.sha256)
+                if let Some(existing) = hash_deletions
+                    .iter_mut()
+                    .find(|existing| existing.path.eq_ignore_ascii_case(&deletion.path))
                 {
+                    *existing = deletion.clone();
+                } else {
                     hash_deletions.push(deletion.clone());
                 }
             }
@@ -987,9 +989,9 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
             }
         }
 
-        // 3.删除管理员明确登记、且内容指纹完全一致的旧模组。
+        // 3.删除管理员明确登记、且精确路径与内容指纹都一致的旧文件。
         for deletion in &hash_deletions {
-            delete_matching_client_mods(&base_dir, deletion, &protected_update_paths).await?;
+            delete_matching_client_file(&base_dir, deletion, &protected_update_paths).await?;
         }
 
         // 4.处理要删除的文件
@@ -1113,74 +1115,82 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
     Ok(())
 }
 
-async fn delete_matching_client_mods(
+async fn delete_matching_client_file(
     base_dir: &Path,
     deletion: &ClientHashDeletion,
     protected_update_paths: &std::collections::HashSet<String>,
 ) -> BusinessResult<()> {
-    if deletion.search_root != ".minecraft/mods" {
-        return Err(BusinessError::new(format!(
-            "拒绝不安全的哈希删除扫描目录: {}",
-            deletion.search_root
-        )));
+    if protected_update_paths
+        .iter()
+        .any(|path| path.eq_ignore_ascii_case(&deletion.path))
+    {
+        log_info(format!(
+            "跳过哈希删除，目标路径将由本次更新写入: {}",
+            deletion.path
+        ));
+        return Ok(());
     }
-    let root = base_dir.join(&deletion.search_root);
-    let mut entries = match tokio::fs::read_dir(&root).await {
-        Ok(entries) => entries,
+
+    let target = base_dir.join(&deletion.path);
+    let metadata = match tokio::fs::symlink_metadata(&target).await {
+        Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => {
             return Err(BusinessError::new(format!(
-                "读取客户端模组目录失败({root:?})，原因：{error:?}"
+                "读取哈希删除目标失败({target:?})，原因：{error:?}"
             )))
         }
     };
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .be(|error| format!("读取客户端模组条目失败({root:?})，原因：{error:?}"))?
-    {
-        let file_type = entry.file_type().await.be(|error| {
-            format!(
-                "读取客户端模组类型失败({:?})，原因：{error:?}",
-                entry.path()
-            )
-        })?;
-        if !file_type.is_file() {
-            continue;
-        }
-        let metadata = entry.metadata().await.be(|error| {
-            format!(
-                "读取客户端模组信息失败({:?})，原因：{error:?}",
-                entry.path()
-            )
-        })?;
-        if metadata.len() != deletion.len {
-            continue;
-        }
-        let relative = format!(
-            "{}/{}",
-            deletion.search_root,
-            entry.file_name().to_string_lossy()
-        );
-        if protected_update_paths.contains(&relative) {
-            continue;
-        }
-        let mut file = tokio::fs::File::open(entry.path())
-            .await
-            .be(|error| format!("打开待核验旧模组失败({:?})，原因：{error:?}", entry.path()))?;
-        if calculate_sha256_async(&mut file).await != deletion.sha256 {
-            continue;
-        }
-        log_info(format!(
-            "按 SHA-256 删除客户端旧模组: {:?} (登记名称: {})",
-            entry.path(),
-            deletion.name_hint
-        ));
-        tokio::fs::remove_file(entry.path())
-            .await
-            .be(|error| format!("删除客户端旧模组失败({:?})，原因：{error:?}", entry.path()))?;
+    if !metadata.file_type().is_file() {
+        log_info(format!("跳过哈希删除，目标不是普通文件: {}", deletion.path));
+        return Ok(());
     }
+
+    let canonical_base = tokio::fs::canonicalize(base_dir)
+        .await
+        .be(|error| format!("核验客户端根目录失败({base_dir:?})，原因：{error:?}"))?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| BusinessError::new("哈希删除目标缺少父目录".to_owned()))?;
+    let canonical_parent = tokio::fs::canonicalize(parent)
+        .await
+        .be(|error| format!("核验哈希删除目标父目录失败({parent:?})，原因：{error:?}"))?;
+    if !path_is_within(&canonical_base, &canonical_parent) {
+        return Err(BusinessError::new(format!(
+            "拒绝越出客户端根目录的哈希删除目标: {}",
+            deletion.path
+        )));
+    }
+
+    if metadata.len() != deletion.len {
+        log_info(format!("跳过哈希删除，目标大小已变化: {}", deletion.path));
+        return Ok(());
+    }
+    let mut file = tokio::fs::File::open(&target)
+        .await
+        .be(|error| format!("打开哈希删除目标失败({target:?})，原因：{error:?}"))?;
+    if calculate_sha256_async(&mut file).await != deletion.sha256 {
+        log_info(format!("跳过哈希删除，目标内容已变化: {}", deletion.path));
+        return Ok(());
+    }
+    log_info(format!(
+        "按精确路径和 SHA-256 删除客户端文件: {}",
+        deletion.path
+    ));
+    tokio::fs::remove_file(&target)
+        .await
+        .be(|error| format!("删除客户端文件失败({target:?})，原因：{error:?}"))?;
     Ok(())
+}
+
+fn path_is_within(base: &Path, candidate: &Path) -> bool {
+    let base = base.to_string_lossy().replace('\\', "/");
+    let candidate = candidate.to_string_lossy().replace('\\', "/");
+    candidate.eq_ignore_ascii_case(&base)
+        || candidate
+            .get(..base.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(&base))
+            && candidate.as_bytes().get(base.len()) == Some(&b'/')
 }
 
 /// 获取更新起始目录
@@ -1257,13 +1267,13 @@ async fn get_working_dir(_params: &StartupParameter) -> BusinessResult<PathBuf> 
 
 #[cfg(test)]
 mod hash_deletion_tests {
-    use super::delete_matching_client_mods;
+    use super::delete_matching_client_file;
     use crate::data::version_meta::ClientHashDeletion;
     use sha2::{Digest, Sha256};
     use std::collections::HashSet;
 
     #[tokio::test]
-    async fn deletes_only_exact_unprotected_mod_hashes() {
+    async fn deletes_only_the_exact_unprotected_path_and_hash() {
         let base = std::env::temp_dir().join(format!("mcpatch-hash-delete-{}", std::process::id()));
         let mods = base.join(".minecraft/mods");
         tokio::fs::create_dir_all(&mods).await.unwrap();
@@ -1279,19 +1289,36 @@ mod hash_deletion_tests {
             .unwrap();
 
         let deletion = ClientHashDeletion {
+            path: ".minecraft/mods/old.jar".to_owned(),
             sha256: format!("{:x}", Sha256::digest(obsolete)),
             len: obsolete.len() as u64,
-            name_hint: "uploaded-old.jar".to_owned(),
-            search_root: ".minecraft/mods".to_owned(),
         };
         let protected = HashSet::from([".minecraft/mods/protected.jar".to_owned()]);
-        delete_matching_client_mods(&base, &deletion, &protected)
+        delete_matching_client_file(&base, &deletion, &protected)
             .await
             .unwrap();
 
         assert!(!mods.join("old.jar").exists());
         assert!(mods.join("different.jar").exists());
         assert!(mods.join("protected.jar").exists());
+
+        let protected_deletion = ClientHashDeletion {
+            path: ".MINECRAFT/MODS/PROTECTED.JAR".to_owned(),
+            ..deletion.clone()
+        };
+        delete_matching_client_file(&base, &protected_deletion, &protected)
+            .await
+            .unwrap();
+        assert!(mods.join("protected.jar").exists());
+
+        let mismatch = ClientHashDeletion {
+            path: ".minecraft/mods/different.jar".to_owned(),
+            ..deletion
+        };
+        delete_matching_client_file(&base, &mismatch, &HashSet::new())
+            .await
+            .unwrap();
+        assert!(mods.join("different.jar").exists());
         tokio::fs::remove_dir_all(base).await.unwrap();
     }
 }

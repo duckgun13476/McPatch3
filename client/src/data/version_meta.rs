@@ -60,10 +60,9 @@ pub struct ExternalSource {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientHashDeletion {
+    pub path: String,
     pub sha256: String,
     pub len: u64,
-    pub name_hint: String,
-    pub search_root: String,
 }
 
 /// 代表单个文件操作
@@ -220,22 +219,13 @@ impl VersionMeta {
     }
 
     fn parse_hash_deletion(v: &JsonValue) -> Option<ClientHashDeletion> {
+        let path = normalize_client_path(v["path"].as_str()?)?;
         let sha256 = v["sha256"].as_str()?.to_ascii_lowercase();
         let len = v["len"].as_u64()?;
-        let name_hint = v["name-hint"].as_str()?.to_owned();
-        let search_root = v["search-root"].as_str()?.to_owned();
-        if sha256.len() != 64
-            || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || search_root != ".minecraft/mods"
-        {
+        if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return None;
         }
-        Some(ClientHashDeletion {
-            sha256,
-            len,
-            name_hint,
-            search_root,
-        })
+        Some(ClientHashDeletion { path, sha256, len })
     }
 
     /// 序列化一个文件变动操作
@@ -296,6 +286,21 @@ impl VersionMeta {
     }
 }
 
+fn normalize_client_path(path: &str) -> Option<String> {
+    let path = path.trim().replace('\\', "/");
+    if path.is_empty() || path.starts_with('/') || path.contains(':') {
+        return None;
+    }
+    let parts = path.split('/').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FileChange, VersionMeta};
@@ -333,23 +338,39 @@ mod tests {
     }
 
     #[test]
-    fn parses_backward_compatible_hash_deletion_metadata() {
+    fn parses_exact_path_hash_deletion_metadata() {
         let value = json::parse(
             r#"{
                 "label":"v1",
                 "logs":"",
                 "changes":[],
                 "delete-by-hash":[{
+                    "path":".minecraft/mods/old.jar",
                     "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "len":42,
-                    "name-hint":"old.jar",
-                    "search-root":".minecraft/mods"
+                    "len":42
                 }]
             }"#,
         )
         .unwrap();
         let meta = VersionMeta::load(&value);
         assert_eq!(meta.client_hash_deletions.len(), 1);
-        assert_eq!(meta.client_hash_deletions[0].name_hint, "old.jar");
+        assert_eq!(
+            meta.client_hash_deletions[0].path,
+            ".minecraft/mods/old.jar"
+        );
+    }
+
+    #[test]
+    fn ignores_legacy_and_unsafe_hash_deletion_metadata() {
+        for entry in [
+            r#"{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","len":42,"name-hint":"old.jar","search-root":".minecraft/mods"}"#,
+            r#"{"path":"../old.jar","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","len":42}"#,
+        ] {
+            let value = json::parse(&format!(
+                r#"{{"label":"v1","logs":"","changes":[],"delete-by-hash":[{entry}]}}"#
+            ))
+            .unwrap();
+            assert!(VersionMeta::load(&value).client_hash_deletions.is_empty());
+        }
     }
 }
