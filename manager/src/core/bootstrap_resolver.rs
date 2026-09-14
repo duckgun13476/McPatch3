@@ -43,6 +43,7 @@ pub struct BootstrapResolvedFile {
     pub length: u64,
     pub sha256: String,
     pub external_source: ExternalSource,
+    pub external_sources: Vec<ExternalSource>,
 }
 
 #[derive(Serialize)]
@@ -119,7 +120,7 @@ pub fn resolve_external_sources(
     let client = reqwest::blocking::Client::builder()
         .build()
         .map_err(|error| format!("failed to create resolver HTTP client: {error}"))?;
-    let mut resolved = HashMap::<String, ExternalSource>::new();
+    let mut resolved = HashMap::<String, Vec<ExternalSource>>::new();
     if config.modrinth.enabled {
         resolve_modrinth(&client, &request.files, &mut resolved)?;
     }
@@ -131,11 +132,12 @@ pub fn resolve_external_sources(
     let mut unmatched = Vec::new();
     for candidate in request.files {
         match resolved.remove(&candidate.path) {
-            Some(external_source) => files.push(BootstrapResolvedFile {
+            Some(external_sources) => files.push(BootstrapResolvedFile {
                 path: candidate.path,
                 length: candidate.length,
                 sha256: candidate.sha256,
-                external_source,
+                external_source: external_sources[0].clone(),
+                external_sources,
             }),
             None => unmatched.push(candidate.path),
         }
@@ -187,7 +189,7 @@ fn validate_request(request: &BootstrapResolveRequest) -> Result<(), String> {
 fn resolve_modrinth(
     client: &reqwest::blocking::Client,
     candidates: &[BootstrapCandidate],
-    resolved: &mut HashMap<String, ExternalSource>,
+    resolved: &mut HashMap<String, Vec<ExternalSource>>,
 ) -> Result<(), String> {
     let mut versions = HashMap::<String, ModrinthVersion>::new();
     for batch in candidates.chunks(HASH_BATCH_SIZE) {
@@ -221,14 +223,14 @@ fn resolve_modrinth(
         }) else {
             continue;
         };
-        resolved.insert(
-            candidate.path.clone(),
-            ExternalSource {
+        resolved
+            .entry(candidate.path.clone())
+            .or_default()
+            .push(ExternalSource {
                 provider: "modrinth".to_owned(),
                 url: file.url.clone(),
                 fallback_to_mcpatch: false,
-            },
-        );
+            });
     }
     Ok(())
 }
@@ -236,14 +238,10 @@ fn resolve_modrinth(
 fn resolve_curseforge(
     client: &reqwest::blocking::Client,
     candidates: &[BootstrapCandidate],
-    resolved: &mut HashMap<String, ExternalSource>,
+    resolved: &mut HashMap<String, Vec<ExternalSource>>,
     config: &Config,
 ) -> Result<(), String> {
-    let unresolved = candidates
-        .iter()
-        .filter(|candidate| !resolved.contains_key(&candidate.path))
-        .collect::<Vec<_>>();
-    for batch in unresolved.chunks(FINGERPRINT_BATCH_SIZE) {
+    for batch in candidates.chunks(FINGERPRINT_BATCH_SIZE) {
         let response = client
             .post(format!(
                 "https://api.curseforge.com/v1/fingerprints/{}",
@@ -276,18 +274,15 @@ fn resolve_curseforge(
             if file.file_length != candidate.length {
                 continue;
             }
-            resolved.insert(
-                candidate.path.clone(),
-                ExternalSource {
-                    provider: "curseforge".to_owned(),
-                    url: curseforge_cdn_url(
-                        &config.curseforge.cdn_base_url,
-                        file.id,
-                        &file.file_name,
-                    ),
-                    fallback_to_mcpatch: false,
-                },
-            );
+            let source = ExternalSource {
+                provider: "curseforge".to_owned(),
+                url: curseforge_cdn_url(&config.curseforge.cdn_base_url, file.id, &file.file_name),
+                fallback_to_mcpatch: false,
+            };
+            let sources = resolved.entry(candidate.path.clone()).or_default();
+            if !sources.iter().any(|existing| existing.url == source.url) {
+                sources.push(source);
+            }
         }
     }
     Ok(())
