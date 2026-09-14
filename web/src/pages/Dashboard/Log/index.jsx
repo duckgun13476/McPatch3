@@ -1,16 +1,17 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Button, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip} from "antd";
+import {Button, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip, Upload} from "antd";
 import {
   taskAddDeleteFileRequest,
-  taskCombineRequest, taskPackRequest, taskRemoveDeleteFileRequest,
+  taskAddHashDeletionRequest, taskCombineRequest, taskPackRequest,
+  taskRemoveDeleteFileRequest, taskRemoveHashDeletionRequest,
   taskRevertRequest,
   taskTestRequest,
   taskUploadRequest,
   taskStatusRequest
 } from "@/api/task.js";
 import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
-import {Plus, RotateCcw, Undo2, X} from "lucide-react";
-import {showFileSize, showTime} from "@/utils/tool.js";
+import {FileMinus2, Plus, RotateCcw, Undo2, X} from "lucide-react";
+import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
 import {hasVersionWhitespace, nextPatchVersion} from "@/utils/version.js";
 
@@ -74,6 +75,7 @@ const Index = () => {
   const [excludedChangeIds, setExcludedChangeIds] = useState([])
   const [deletePath, setDeletePath] = useState('')
   const [packLoading, setPackLoading] = useState(false)
+  const [hashDeleteLoading, setHashDeleteLoading] = useState(false)
   const logsRef = useRef(null);
   const [messageApi, contextHolder] = message.useMessage();
 
@@ -194,6 +196,17 @@ const Index = () => {
   }
 
   const removeChange = async (change) => {
+    if (change.explicit && change.operation === 'delete-file-by-hash') {
+      const {code, msg} = await taskRemoveHashDeletionRequest(change.hash)
+      if (code !== 1) {
+        messageApi.error(msg)
+        return
+      }
+      const tempVersion = version === '' ? generateRandomStr() : version
+      const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
+      await loadPackPreview(tempVersion, tempUpdateRecord)
+      return
+    }
     if (change.explicit && change.operation === 'delete-file') {
       const {code, msg} = await taskRemoveDeleteFileRequest(change.path)
       if (code !== 1) {
@@ -221,7 +234,8 @@ const Index = () => {
     'update-file': '替换文件',
     'move-file': '移动',
     'delete-file': '删除文件',
-    'delete-directory': '删除目录'
+    'delete-directory': '删除目录',
+    'delete-file-by-hash': '客户端哈希删除'
   }[operation] || operation)
 
   const operationColor = (operation) => ({
@@ -230,10 +244,38 @@ const Index = () => {
     'update-file': 'blue',
     'move-file': 'gold',
     'delete-file': 'red',
-    'delete-directory': 'red'
+    'delete-directory': 'red',
+    'delete-file-by-hash': 'magenta'
   }[operation] || 'default')
 
   const visiblePackChanges = packPreview?.changes.filter(change => !excludedChangeIds.includes(change.id)) || []
+
+  const hashDeleteUploadProps = {
+    showUploadList: false,
+    multiple: false,
+    maxCount: 1,
+    accept: '.jar',
+    customRequest: async ({file, onSuccess, onError, onProgress}) => {
+      setHashDeleteLoading(true)
+      try {
+        const response = await taskAddHashDeletionRequest(file, onProgress)
+        if (response.code !== 1) {
+          messageApi.error(response.msg)
+          onError(new Error(response.msg))
+          return
+        }
+        setPackPreview(null)
+        setExcludedChangeIds([])
+        messageApi.success(`已登记客户端删除：${file.name}`)
+        onSuccess(response)
+      } catch (error) {
+        messageApi.error('客户端删除指纹上传失败。')
+        onError(error)
+      } finally {
+        setHashDeleteLoading(false)
+      }
+    }
+  }
 
   const taskCombine = async () => {
     const {code, msg, data} = await taskCombineRequest();
@@ -387,6 +429,18 @@ const Index = () => {
                 <Button icon={<Plus size={18}/>} onClick={addDeleteChange}/>
               </Tooltip>
             </div>
+            <div className="mt-5 text-sm font-medium text-gray-700">删除仅存在于玩家客户端的旧模组</div>
+            <div className="mt-2 text-xs text-gray-400">
+              上传旧 jar 只用于计算 SHA-256，不会保存文件；客户端仅删除内容完全一致的模组。
+            </div>
+            <Upload {...hashDeleteUploadProps}>
+              <Button
+                className="mt-2"
+                icon={<FileMinus2 size={18}/>}
+                loading={hashDeleteLoading}>
+                客户端删除
+              </Button>
+            </Upload>
           </div>
         ) : (
           <div>

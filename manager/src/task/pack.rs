@@ -10,10 +10,10 @@ use crate::core::archive_tester::ArchiveTester;
 use crate::core::curseforge::attach_external_sources;
 use crate::core::data::index_file::{IndexFile, VersionIndex};
 use crate::core::data::pending_changes::PendingChanges;
-use crate::core::data::version_meta::{FileChange, VersionMeta};
-use crate::core::modrinth::attach_external_sources as attach_modrinth_sources;
+use crate::core::data::version_meta::{ClientHashDeletion, FileChange, VersionMeta};
 use crate::core::data::version_meta_group::VersionMetaGroup;
-use crate::core::file_hash::calculate_hash;
+use crate::core::file_hash::{calculate_hash, calculate_sha256};
+use crate::core::modrinth::attach_external_sources as attach_modrinth_sources;
 use crate::core::tar_writer::TarWriter;
 use crate::diff::abstract_file::AbstractFile;
 use crate::diff::diff::Diff;
@@ -41,6 +41,7 @@ pub struct PackChangeCounts {
     pub move_file: usize,
     pub delete_file: usize,
     pub delete_directory: usize,
+    pub delete_by_hash: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -55,6 +56,15 @@ pub struct PackPlan {
     pub preview: PackPreview,
     pub changes: Vec<FileChange>,
     pub pending_deletions: HashSet<String>,
+    pub hash_deletions: Vec<ClientHashDeletion>,
+    pub pending_hash_deletions: HashSet<String>,
+}
+
+pub struct PackSelection {
+    pub changes: Vec<FileChange>,
+    pub hash_deletions: Vec<ClientHashDeletion>,
+    pub emitted_pending_deletions: HashSet<String>,
+    pub emitted_pending_hash_deletions: HashSet<String>,
 }
 
 pub fn build_pack_plan(
@@ -81,6 +91,8 @@ pub fn build_pack_plan(
     let mut changes = diff.to_file_changes().into_iter().collect::<Vec<_>>();
     let mut explicit_paths = HashSet::new();
     let mut pending_deletions = HashSet::new();
+    let mut hash_deletions = Vec::new();
+    let mut pending_hash_deletions = HashSet::new();
 
     for deletion in &pending.forced_deletions {
         let path = deletion.path.as_str();
@@ -120,10 +132,30 @@ pub fn build_pack_plan(
         }
     }
 
+    for deletion in pending.hash_deletions.iter().filter(|entry| entry.pending) {
+        if workspace_contains_sha256(
+            &apppath.workspace_dir.join(&deletion.search_root),
+            deletion.len,
+            &deletion.sha256,
+        )? {
+            return Err(format!(
+                "客户端哈希删除目标仍存在于当前工作区，拒绝打包: {} ({})",
+                deletion.name_hint, deletion.sha256
+            ));
+        }
+        hash_deletions.push(ClientHashDeletion {
+            sha256: deletion.sha256.clone(),
+            len: deletion.len,
+            name_hint: deletion.name_hint.clone(),
+            search_root: deletion.search_root.clone(),
+        });
+        pending_hash_deletions.insert(deletion.sha256.clone());
+    }
+
     changes.sort_by_key(canonical_change);
     changes.dedup_by(|left, right| canonical_change(left) == canonical_change(right));
 
-    let previews = changes
+    let mut previews = changes
         .iter()
         .map(|change| {
             let existed_before = match change {
@@ -133,7 +165,8 @@ pub fn build_pack_plan(
             preview_change(change, &explicit_paths, existed_before)
         })
         .collect::<Vec<_>>();
-    let fingerprint = fingerprint(&version_label, change_logs, &changes);
+    previews.extend(hash_deletions.iter().map(preview_hash_deletion));
+    let fingerprint = fingerprint(&version_label, change_logs, &changes, &hash_deletions);
     let counts = count_changes(&previews);
 
     Ok(PackPlan {
@@ -145,13 +178,15 @@ pub fn build_pack_plan(
         },
         changes,
         pending_deletions,
+        hash_deletions,
+        pending_hash_deletions,
     })
 }
 
 pub fn select_pack_changes(
     plan: PackPlan,
     excluded_ids: &[String],
-) -> Result<(Vec<FileChange>, HashSet<String>), String> {
+) -> Result<PackSelection, String> {
     let available = plan
         .preview
         .changes
@@ -167,6 +202,7 @@ pub fn select_pack_changes(
 
     let excluded = excluded_ids.iter().collect::<HashSet<_>>();
     let mut emitted_pending_deletions = HashSet::new();
+    let mut emitted_pending_hash_deletions = HashSet::new();
     let selected = plan
         .changes
         .into_iter()
@@ -184,11 +220,29 @@ pub fn select_pack_changes(
         })
         .collect::<Vec<_>>();
 
-    if selected.is_empty() {
+    let selected_hash_deletions = plan
+        .hash_deletions
+        .into_iter()
+        .filter(|deletion| {
+            let id = hash_deletion_id(deletion);
+            let included = !excluded.contains(&id);
+            if included && plan.pending_hash_deletions.contains(&deletion.sha256) {
+                emitted_pending_hash_deletions.insert(deletion.sha256.clone());
+            }
+            included
+        })
+        .collect::<Vec<_>>();
+
+    if selected.is_empty() && selected_hash_deletions.is_empty() {
         return Err("没有选中任何可打包变更".to_owned());
     }
 
-    Ok((selected, emitted_pending_deletions))
+    Ok(PackSelection {
+        changes: selected,
+        hash_deletions: selected_hash_deletions,
+        emitted_pending_deletions,
+        emitted_pending_hash_deletions,
+    })
 }
 
 pub fn task_pack(
@@ -212,17 +266,29 @@ pub fn task_pack(
             return 1;
         }
     };
-    let (changes, emitted) = match select_pack_changes(plan, &[]) {
+    let selection = match select_pack_changes(plan, &[]) {
         Ok(selection) => selection,
         Err(error) => {
             console.log_error(error);
             return 1;
         }
     };
-    let code = task_pack_selected(version_label, change_logs, changes, apppath, config, console);
-    if code == 0 && !emitted.is_empty() {
+    let code = task_pack_selected(
+        version_label,
+        change_logs,
+        selection.changes,
+        selection.hash_deletions,
+        apppath,
+        config,
+        console,
+    );
+    if code == 0
+        && (!selection.emitted_pending_deletions.is_empty()
+            || !selection.emitted_pending_hash_deletions.is_empty())
+    {
         let mut pending = pending;
-        pending.mark_emitted(&emitted);
+        pending.mark_emitted(&selection.emitted_pending_deletions);
+        pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
         if let Err(error) = pending.save(&apppath.pending_changes_file) {
             console.log_warning(format!("更新包已生成，但删除规则状态保存失败: {error}"));
         }
@@ -234,6 +300,7 @@ pub fn task_pack_selected(
     version_label: String,
     change_logs: String,
     changes: Vec<FileChange>,
+    client_hash_deletions: Vec<ClientHashDeletion>,
     apppath: &AppPath,
     config: &Config,
     console: &Console,
@@ -257,7 +324,7 @@ pub fn task_pack_selected(
         console.log_error(format!("版本号已经存在: {version_label}"));
         return 1;
     }
-    if changes.is_empty() {
+    if changes.is_empty() && client_hash_deletions.is_empty() {
         console.log_error("目前没有任何已选择的文件修改");
         return 1;
     }
@@ -329,6 +396,7 @@ pub fn task_pack_selected(
         version_label.clone(),
         change_logs,
         changes,
+        client_hash_deletions,
     );
     let meta_info = writer.finish(VersionMetaGroup::with_one(meta));
     index_file.add(VersionIndex {
@@ -442,6 +510,19 @@ fn preview_change(
     }
 }
 
+fn preview_hash_deletion(deletion: &ClientHashDeletion) -> PackChangePreview {
+    PackChangePreview {
+        id: hash_deletion_id(deletion),
+        operation: "delete-file-by-hash".to_owned(),
+        path: Some(deletion.name_hint.clone()),
+        from: None,
+        to: None,
+        hash: Some(deletion.sha256.clone()),
+        len: Some(deletion.len),
+        explicit: true,
+    }
+}
+
 fn count_changes(changes: &[PackChangePreview]) -> PackChangeCounts {
     let mut counts = PackChangeCounts::default();
     for change in changes {
@@ -452,13 +533,19 @@ fn count_changes(changes: &[PackChangePreview]) -> PackChangeCounts {
             "move-file" => counts.move_file += 1,
             "delete-file" => counts.delete_file += 1,
             "delete-directory" => counts.delete_directory += 1,
+            "delete-file-by-hash" => counts.delete_by_hash += 1,
             _ => {}
         }
     }
     counts
 }
 
-fn fingerprint(version_label: &str, change_logs: &str, changes: &[FileChange]) -> String {
+fn fingerprint(
+    version_label: &str,
+    change_logs: &str,
+    changes: &[FileChange],
+    hash_deletions: &[ClientHashDeletion],
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(version_label.as_bytes());
     hasher.update([0]);
@@ -466,6 +553,10 @@ fn fingerprint(version_label: &str, change_logs: &str, changes: &[FileChange]) -
     for change in changes {
         hasher.update([0]);
         hasher.update(canonical_change(change).as_bytes());
+    }
+    for deletion in hash_deletions {
+        hasher.update([0]);
+        hasher.update(canonical_hash_deletion(deletion).as_bytes());
     }
     format!("{:x}", hasher.finalize())
 }
@@ -491,10 +582,8 @@ fn canonical_change(change: &FileChange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        change_id, count_changes, fingerprint, normalize_version_label, preview_change,
-    };
-    use crate::core::data::version_meta::FileChange;
+    use super::{change_id, count_changes, fingerprint, normalize_version_label, preview_change};
+    use crate::core::data::version_meta::{ClientHashDeletion, FileChange};
     use std::collections::HashSet;
     use std::time::SystemTime;
 
@@ -516,8 +605,24 @@ mod tests {
             path: ".minecraft/mods/old.jar".to_owned(),
         }];
         assert_ne!(
-            fingerprint("v1", "first", &changes),
-            fingerprint("v1", "second", &changes)
+            fingerprint("v1", "first", &changes, &[]),
+            fingerprint("v1", "second", &changes, &[])
+        );
+    }
+
+    #[test]
+    fn fingerprint_covers_hash_deletion_metadata() {
+        let first = ClientHashDeletion {
+            sha256: "a".repeat(64),
+            len: 42,
+            name_hint: "old.jar".to_owned(),
+            search_root: ".minecraft/mods".to_owned(),
+        };
+        let mut second = first.clone();
+        second.sha256 = "b".repeat(64);
+        assert_ne!(
+            fingerprint("v1", "same", &[], &[first]),
+            fingerprint("v1", "same", &[], &[second])
         );
     }
 
@@ -549,4 +654,49 @@ mod tests {
         assert!(normalize_version_label("v7.7. 448").is_err());
         assert!(normalize_version_label("  ").is_err());
     }
+}
+
+fn hash_deletion_id(deletion: &ClientHashDeletion) -> String {
+    let digest = Sha256::digest(canonical_hash_deletion(deletion).as_bytes());
+    format!("{:x}", digest)
+}
+
+fn canonical_hash_deletion(deletion: &ClientHashDeletion) -> String {
+    format!(
+        "6|delete-file-by-hash|{}|{}|{}|{}",
+        deletion.search_root, deletion.sha256, deletion.len, deletion.name_hint
+    )
+}
+
+fn workspace_contains_sha256(
+    root: &std::path::Path,
+    len: u64,
+    expected: &str,
+) -> Result<bool, String> {
+    if !root.exists() {
+        return Ok(false);
+    }
+    let entries = std::fs::read_dir(root)
+        .map_err(|error| format!("读取工作区模组目录失败({root:?}): {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("读取工作区模组条目失败: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("读取工作区模组类型失败({:?}): {error}", entry.path()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("读取工作区模组信息失败({:?}): {error}", entry.path()))?;
+        if metadata.len() != len {
+            continue;
+        }
+        let mut file = std::fs::File::open(entry.path())
+            .map_err(|error| format!("读取工作区模组失败({:?}): {error}", entry.path()))?;
+        if calculate_sha256(&mut file) == expected {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

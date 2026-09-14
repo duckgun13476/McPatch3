@@ -46,11 +46,10 @@ pub async fn api_pack(
         return PublicResponseBody::<()>::err("工作区已变化，请重新检查并确认变化列表");
     }
 
-    let (changes, emitted_pending_deletions) =
-        match select_pack_changes(plan, &payload.excluded_change_ids) {
-            Ok(selection) => selection,
-            Err(error) => return PublicResponseBody::<()>::err(&error),
-        };
+    let selection = match select_pack_changes(plan, &payload.excluded_change_ids) {
+        Ok(selection) => selection,
+        Err(error) => return PublicResponseBody::<()>::err(&error),
+    };
 
     let wait = headers.get("wait").is_some();
     state
@@ -62,15 +61,19 @@ pub async fn api_pack(
             let code = task_pack_selected(
                 payload.label,
                 payload.change_logs,
-                changes,
+                selection.changes,
+                selection.hash_deletions,
                 &state.apppath,
                 &state.config,
                 &state.console,
             );
             if code == 0 {
-                if !emitted_pending_deletions.is_empty() {
+                if !selection.emitted_pending_deletions.is_empty()
+                    || !selection.emitted_pending_hash_deletions.is_empty()
+                {
                     let mut pending = state.pending_changes.blocking_lock();
-                    pending.mark_emitted(&emitted_pending_deletions);
+                    pending.mark_emitted(&selection.emitted_pending_deletions);
+                    pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
                     if let Err(error) = pending.save(&state.apppath.pending_changes_file) {
                         state
                             .console

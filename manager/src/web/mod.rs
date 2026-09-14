@@ -1,9 +1,9 @@
 pub mod api;
+pub mod auth_layer;
 pub mod file_status;
 pub mod log;
-pub mod webstate;
 pub mod task_executor;
-pub mod auth_layer;
+pub mod webstate;
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -24,24 +24,26 @@ use crate::app_path::AppPath;
 use crate::builtin_server::start_builtin_server;
 use crate::config::auth_config::AuthConfig;
 use crate::config::Config;
+use crate::web::api::fs::delete::api_delete;
+use crate::web::api::fs::disk_info::api_disk_info;
+use crate::web::api::fs::download::api_download;
 use crate::web::api::fs::extract_file::api_extract_file;
+use crate::web::api::fs::list::api_list;
+use crate::web::api::fs::make_directory::api_make_directory;
 use crate::web::api::fs::r#move::api_move;
 use crate::web::api::fs::sign_file::api_sign_file;
+use crate::web::api::fs::upload::api_upload_fs;
 use crate::web::api::misc::version_list::api_version_list;
 use crate::web::api::public::api_public;
-use crate::web::api::task::changes::{api_add_delete_file, api_remove_delete_file};
+use crate::web::api::task::changes::{
+    api_add_delete_file, api_add_hash_deletion, api_remove_delete_file, api_remove_hash_deletion,
+};
 use crate::web::api::task::check::api_status;
 use crate::web::api::task::combine::api_combine;
 use crate::web::api::task::pack::api_pack;
 use crate::web::api::task::revert::api_revert;
 use crate::web::api::task::sync::api_upload_api;
 use crate::web::api::task::test::api_test;
-use crate::web::api::fs::delete::api_delete;
-use crate::web::api::fs::disk_info::api_disk_info;
-use crate::web::api::fs::download::api_download;
-use crate::web::api::fs::list::api_list;
-use crate::web::api::fs::make_directory::api_make_directory;
-use crate::web::api::fs::upload::api_upload_fs;
 use crate::web::api::terminal::full::api_full;
 use crate::web::api::terminal::more::api_more;
 use crate::web::api::user::change_password::api_change_password;
@@ -60,14 +62,17 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
 
     if let Some(pwd) = first_password {
         println!("检测到首次运行，正在生成配置信息。");
-        println!("这是账号和密码，请务必牢记。账号：admin，密码：{}（只会显示一次，请注意保存）", pwd);
+        println!(
+            "这是账号和密码，请务必牢记。账号：admin，密码：{}（只会显示一次，请注意保存）",
+            pwd
+        );
     }
 
     // 启动私有协议服务端
     {
         let config = config.clone();
         let apppath = apppath.clone();
-        
+
         tokio::spawn(async move {
             start_builtin_server(config, apppath).await;
         });
@@ -77,12 +82,17 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
     let listen_port = config.web.listen_port.to_owned();
     let listen = format!("{}:{}", listen_addr, listen_port);
 
-    let quick_addr = format!("{}:{}", listen_addr.replace("0.0.0.0", "127.0.0.1"), listen_port);
+    let quick_addr = format!(
+        "{}:{}",
+        listen_addr.replace("0.0.0.0", "127.0.0.1"),
+        listen_port
+    );
 
     println!("web监听地址和端口：{} ( http://{} )", listen, quick_addr);
 
     // 配置tls
-    let tls_config = if !config.web.tls_cert_file.is_empty() && !config.web.tls_key_file.is_empty() {
+    let tls_config = if !config.web.tls_cert_file.is_empty() && !config.web.tls_key_file.is_empty()
+    {
         // println!("准备加载TLS证书");
 
         let cert_file = apppath.working_dir.join(&config.web.tls_cert_file);
@@ -110,7 +120,7 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
     } else {
         None
     };
-    
+
     // 配置cors
     let cors_layer = CorsLayer::new()
         .allow_credentials(config.web.cors_allow_credentials)
@@ -129,19 +139,27 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/user/logout", post(api_logout))
         .route("/api/user/change-username", post(api_change_username))
         .route("/api/user/change-password", post(api_change_password))
-
         .route("/api/terminal/full", post(api_full))
         .route("/api/terminal/more", post(api_more))
-
         .route("/api/task/status", post(api_status))
         .route("/api/task/test", post(api_test))
         .route("/api/task/combine", post(api_combine))
         .route("/api/task/pack", post(api_pack))
         .route("/api/task/change/delete-file", post(api_add_delete_file))
-        .route("/api/task/change/remove-delete-file", post(api_remove_delete_file))
+        .route(
+            "/api/task/change/remove-delete-file",
+            post(api_remove_delete_file),
+        )
+        .route(
+            "/api/task/change/delete-file-by-hash",
+            post(api_add_hash_deletion),
+        )
+        .route(
+            "/api/task/change/remove-delete-file-by-hash",
+            post(api_remove_hash_deletion),
+        )
         .route("/api/task/revert", post(api_revert))
         .route("/api/task/upload", post(api_upload_api))
-
         .route("/api/fs/disk-info", post(api_disk_info))
         .route("/api/fs/list", post(api_list))
         .route("/api/fs/upload", post(api_upload_fs))
@@ -150,24 +168,17 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/fs/delete", post(api_delete))
         .route("/api/fs/move", post(api_move))
         .route("/api/fs/sign-file", post(api_sign_file))
-        
         .route("/api/misc/version-list", post(api_version_list))
         .route_layer(AuthLayer::new(webstate.clone()))
-
         // 这部分不参与请求验证
         .route("/api/user/login", post(api_login))
-
         .route("/api/fs/extract-file", get(api_extract_file))
-
         .route("/public/*path", get(api_public))
-
         .route("/", get(api_webpage_index))
         .route("/*path", get(api_webpage))
-        
         // 其它的中间件
         .layer(cors_layer)
-        .with_state(webstate.clone())
-        ;
+        .with_state(webstate.clone());
 
     // 开始监听传入连接
     let addr = SocketAddr::from_str(&listen).unwrap();
@@ -178,27 +189,35 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
                 .serve(app.into_make_service())
                 .await
                 .unwrap();
-        },
+        }
         None => {
             axum_server::bind(addr)
                 .serve(app.into_make_service())
                 .await
                 .unwrap();
-        },
+        }
     }
 }
 
 fn parse_allow_headers(date: &Vec<String>) -> AllowHeaders {
     match date.iter().any(|e| e == "*") {
         true => AllowHeaders::any(),
-        false => AllowHeaders::list(date.iter().map(|e| HeaderName::from_str(&e).unwrap()).collect::<Vec<_>>()),
+        false => AllowHeaders::list(
+            date.iter()
+                .map(|e| HeaderName::from_str(&e).unwrap())
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
 fn parse_allow_methods(date: &Vec<String>) -> AllowMethods {
     match date.iter().any(|e| e == "*") {
         true => AllowMethods::any(),
-        false => AllowMethods::list(date.iter().map(|e| Method::from_str(&e).unwrap()).collect::<Vec<_>>()),
+        false => AllowMethods::list(
+            date.iter()
+                .map(|e| Method::from_str(&e).unwrap())
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
@@ -212,6 +231,10 @@ fn parse_allow_origin(date: &Vec<String>) -> AllowOrigin {
 fn parse_expose_headers(date: &Vec<String>) -> ExposeHeaders {
     match date.iter().any(|e| e == "*") {
         true => ExposeHeaders::any(),
-        false => ExposeHeaders::list(date.iter().map(|e| HeaderName::from_str(&e).unwrap()).collect::<Vec<_>>()),
+        false => ExposeHeaders::list(
+            date.iter()
+                .map(|e| HeaderName::from_str(&e).unwrap())
+                .collect::<Vec<_>>(),
+        ),
     }
 }
