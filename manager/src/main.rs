@@ -10,6 +10,7 @@ use clap::Subcommand;
 use crate::app_path::AppPath;
 use crate::builtin_server::start_builtin_server;
 use crate::config::Config;
+use crate::core::bootstrap_resolver::resolve_from_stdio;
 use crate::task::check::task_check;
 use crate::task::combine::task_combine;
 use crate::task::pack::task_pack;
@@ -58,7 +59,10 @@ enum Commands {
     Serve,
 
     /// 运行webui
-    Webui, 
+    Webui,
+
+    /// Resolve client mod CDN sources from a JSON inventory on stdin.
+    ResolveExternalSources,
 }
 
 fn main() {
@@ -133,6 +137,13 @@ async fn handle_command(apppath: &AppPath, config: &Config, console: &Console, c
             serve_web(apppath.clone(), config.clone()).await;
 
             0
+        },
+        Commands::ResolveExternalSources => match resolve_from_stdio(config) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
         },
     };
 

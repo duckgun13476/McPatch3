@@ -52,7 +52,8 @@ use std::time::UNIX_EPOCH;
 use json::JsonValue;
 
 /// 可选的外部下载源。客户端仅在校验最终内容后才采用它。
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ExternalSource {
     pub provider: String,
     pub url: String,
