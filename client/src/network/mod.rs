@@ -107,12 +107,14 @@ impl<'a> Network<'a> {
         &mut self,
         path: &str,
         desc: impl AsRef<str>,
+        max_len: usize,
     ) -> BusinessResult<Vec<u8>> {
         let (len, mut data) = self.request_file(path, 0..0, desc.as_ref()).await?;
-        if len > 1_048_576 {
+        if len > max_len as u64 {
             return Err(BusinessError::new(format!(
-                "网络资源过大（{} bytes）：{}",
+                "网络资源超过允许上限（{} > {} bytes）：{}",
                 len,
+                max_len,
                 desc.as_ref()
             )));
         }

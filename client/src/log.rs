@@ -48,6 +48,10 @@ pub fn log_info(content: impl AsRef<str>) {
     log_message(content, MessageLevel::Info, true);
 }
 
+pub fn log_warning(content: impl AsRef<str>) {
+    log_message(content, MessageLevel::Warning, true);
+}
+
 pub fn log_debug(content: impl AsRef<str>) {
     log_message(content, MessageLevel::Debug, true);
 }

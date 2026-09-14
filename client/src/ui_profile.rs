@@ -3,6 +3,7 @@ use std::path::Path;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
+use crate::log::log_warning;
 use crate::network::Network;
 
 const PROFILE_PATH: &str = "ui-profile.json";
@@ -121,16 +122,22 @@ pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<Ui
     let mut profile = validate_profile(serde_json::from_str::<UiProfile>(&text).ok()?)?;
 
     if !profile.icon.is_empty() {
-        if let Ok(icon) = network
-            .request_bytes(&profile.icon, "updater UI icon")
+        match network
+            .request_bytes(&profile.icon, "updater UI icon", MAX_ICON_BYTES)
             .await
         {
-            if icon.len() <= MAX_ICON_BYTES {
-                if let Some(encoded) = data_url(&icon) {
-                    if encoded.len() <= MAX_ICON_DATA_URL_BYTES {
-                        profile.icon_data_url = encoded;
-                    }
+            Ok(icon) => match data_url(&icon) {
+                Some(encoded) if encoded.len() <= MAX_ICON_DATA_URL_BYTES => {
+                    profile.icon_data_url = encoded;
                 }
+                Some(_) => log_warning("远端更新器图标编码后超过 4 MiB，继续使用缓存图标"),
+                None => log_warning("远端更新器图标格式不受支持，继续使用缓存图标"),
+            },
+            Err(error) => {
+                log_warning(format!(
+                    "远端更新器图标加载失败，继续使用缓存图标：{}",
+                    error.reason
+                ));
             }
         }
     }
@@ -212,6 +219,8 @@ fn safe_asset_path(path: &str) -> bool {
 fn data_url(bytes: &[u8]) -> Option<String> {
     let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         "image/jpeg"
     } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
@@ -241,6 +250,13 @@ mod tests {
         assert!(data_url(b"\x89PNG\r\n\x1a\nrest")
             .unwrap()
             .starts_with("data:image/png"));
+    }
+
+    #[test]
+    fn accepts_animated_gif_data_url_even_with_a_png_asset_path() {
+        assert!(data_url(b"GIF89arest")
+            .unwrap()
+            .starts_with("data:image/gif"));
     }
 
     #[test]
