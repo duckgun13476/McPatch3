@@ -211,7 +211,8 @@ const Index = () => {
 
   const operationLabel = (operation) => ({
     'create-directory': '新增目录',
-    'update-file': '新增或更新',
+    'add-file': '新增文件',
+    'update-file': '替换文件',
     'move-file': '移动',
     'delete-file': '删除文件',
     'delete-directory': '删除目录'
@@ -219,6 +220,7 @@ const Index = () => {
 
   const operationColor = (operation) => ({
     'create-directory': 'green',
+    'add-file': 'cyan',
     'update-file': 'blue',
     'move-file': 'gold',
     'delete-file': 'red',

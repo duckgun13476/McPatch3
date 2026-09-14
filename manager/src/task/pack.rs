@@ -36,6 +36,7 @@ pub struct PackChangePreview {
 #[derive(Clone, Default, Serialize)]
 pub struct PackChangeCounts {
     pub create_directory: usize,
+    pub add_file: usize,
     pub update_file: usize,
     pub move_file: usize,
     pub delete_file: usize,
@@ -127,10 +128,16 @@ pub fn build_pack_plan(
 
     let previews = changes
         .iter()
-        .map(|change| preview_change(change, &explicit_paths))
+        .map(|change| {
+            let existed_before = match change {
+                FileChange::UpdateFile { path, .. } => history.find(path).is_some(),
+                _ => false,
+            };
+            preview_change(change, &explicit_paths, existed_before)
+        })
         .collect::<Vec<_>>();
     let fingerprint = fingerprint(version_label, change_logs, &changes);
-    let counts = count_changes(&changes);
+    let counts = count_changes(&previews);
 
     Ok(PackPlan {
         preview: PackPreview {
@@ -357,7 +364,11 @@ fn change_writes_path(change: &FileChange, expected: &str) -> bool {
     }
 }
 
-fn preview_change(change: &FileChange, explicit_paths: &HashSet<String>) -> PackChangePreview {
+fn preview_change(
+    change: &FileChange,
+    explicit_paths: &HashSet<String>,
+    existed_before: bool,
+) -> PackChangePreview {
     let (operation, path, from, to, hash, len) = match change {
         FileChange::CreateFolder { path } => (
             "create-directory",
@@ -370,7 +381,11 @@ fn preview_change(change: &FileChange, explicit_paths: &HashSet<String>) -> Pack
         FileChange::UpdateFile {
             path, hash, len, ..
         } => (
-            "update-file",
+            if existed_before {
+                "update-file"
+            } else {
+                "add-file"
+            },
             Some(path.clone()),
             None,
             None,
@@ -413,15 +428,17 @@ fn preview_change(change: &FileChange, explicit_paths: &HashSet<String>) -> Pack
     }
 }
 
-fn count_changes(changes: &[FileChange]) -> PackChangeCounts {
+fn count_changes(changes: &[PackChangePreview]) -> PackChangeCounts {
     let mut counts = PackChangeCounts::default();
     for change in changes {
-        match change {
-            FileChange::CreateFolder { .. } => counts.create_directory += 1,
-            FileChange::UpdateFile { .. } => counts.update_file += 1,
-            FileChange::MoveFile { .. } => counts.move_file += 1,
-            FileChange::DeleteFile { .. } => counts.delete_file += 1,
-            FileChange::DeleteFolder { .. } => counts.delete_directory += 1,
+        match change.operation.as_str() {
+            "create-directory" => counts.create_directory += 1,
+            "add-file" => counts.add_file += 1,
+            "update-file" => counts.update_file += 1,
+            "move-file" => counts.move_file += 1,
+            "delete-file" => counts.delete_file += 1,
+            "delete-directory" => counts.delete_directory += 1,
+            _ => {}
         }
     }
     counts
@@ -460,8 +477,10 @@ fn canonical_change(change: &FileChange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{change_id, fingerprint};
+    use super::{change_id, count_changes, fingerprint, preview_change};
     use crate::core::data::version_meta::FileChange;
+    use std::collections::HashSet;
+    use std::time::SystemTime;
 
     #[test]
     fn change_ids_are_stable_and_operation_specific() {
@@ -484,5 +503,27 @@ mod tests {
             fingerprint("v1", "first", &changes),
             fingerprint("v1", "second", &changes)
         );
+    }
+
+    #[test]
+    fn preview_distinguishes_added_and_replaced_files() {
+        let change = FileChange::UpdateFile {
+            path: ".minecraft/mods/example.jar".to_owned(),
+            hash: "abc123".to_owned(),
+            len: 42,
+            modified: SystemTime::UNIX_EPOCH,
+            offset: 0,
+            external_source: None,
+        };
+        let explicit_paths = HashSet::new();
+        let added = preview_change(&change, &explicit_paths, false);
+        let replaced = preview_change(&change, &explicit_paths, true);
+
+        assert_eq!(added.operation, "add-file");
+        assert_eq!(replaced.operation, "update-file");
+
+        let counts = count_changes(&[added, replaced]);
+        assert_eq!(counts.add_file, 1);
+        assert_eq!(counts.update_file, 1);
     }
 }
