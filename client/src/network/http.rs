@@ -35,6 +35,17 @@ pub struct HttpProtocol {
 
 impl HttpProtocol {
     pub fn new(url: &str, config: &GlobalConfig, index: u32) -> Self {
+        Self::with_timeout(url, config, index, config.http_timeout)
+    }
+
+    pub fn new_external(config: &GlobalConfig) -> Self {
+        // Public mod CDNs can take several seconds just to complete TLS from
+        // mainland networks. Keep their pooled client separate from the fast
+        // mcpatch source timeout, and reuse it across every file and segment.
+        Self::with_timeout("", config, u32::MAX, config.http_timeout.max(30_000))
+    }
+
+    fn with_timeout(url: &str, config: &GlobalConfig, index: u32, timeout_ms: u32) -> Self {
         // 添加自定义协议头
         let mut def_headers = HeaderMap::new();
 
@@ -48,8 +59,11 @@ impl HttpProtocol {
 
         let client = ClientBuilder::new()
             .default_headers(def_headers)
-            .connect_timeout(Duration::from_millis(config.http_timeout as u64))
-            .read_timeout(Duration::from_millis(config.http_timeout as u64))
+            .connect_timeout(Duration::from_millis(timeout_ms as u64))
+            .read_timeout(Duration::from_millis(timeout_ms as u64))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(30))
+            .user_agent("McPatch-AutoUpdater/1")
             .danger_accept_invalid_certs(config.http_ignore_certificate)
             .use_rustls_tls() // https://github.com/seanmonstar/reqwest/issues/2004#issuecomment-2180557375
             .build()
@@ -67,28 +81,13 @@ impl HttpProtocol {
             index,
         }
     }
-}
 
-#[async_trait]
-impl UpdatingSource for HttpProtocol {
-    async fn request(
-        &mut self,
-        path: &str,
+    pub(crate) async fn request_url(
+        &self,
+        full_url: &str,
         range: &Range<u64>,
         desc: &str,
-        _config: &GlobalConfig,
     ) -> DownloadResult {
-        let full_url = if path.is_empty() {
-            self.url.to_owned()
-        } else {
-            format!(
-                "{}{}{}",
-                self.url,
-                if self.url.ends_with("/") { "" } else { "/" },
-                path
-            )
-        };
-
         // 检查输入参数，start不能大于end
         let partial_file = range.start > 0 || range.end > 0;
 
@@ -97,7 +96,7 @@ impl UpdatingSource for HttpProtocol {
         }
 
         // 构建请求
-        let mut req = self.client.get(&full_url);
+        let mut req = self.client.get(full_url);
         if partial_file {
             req = req.header("Range", format!("bytes={}-{}", range.start, range.end - 1));
         }
@@ -122,7 +121,7 @@ impl UpdatingSource for HttpProtocol {
 
             return Ok(Err(BusinessError::new(format!(
                 "服务器({})返回了{}而不是206: {} ({})\n{}",
-                self.index, code, path, desc, body
+                self.index, code, full_url, desc, body
             ))));
         }
 
@@ -131,7 +130,7 @@ impl UpdatingSource for HttpProtocol {
             None => {
                 return Ok(Err(BusinessError::new(format!(
                     "服务器({})没有返回content-length头: {} ({})",
-                    self.index, path, desc
+                    self.index, full_url, desc
                 ))))
             }
         };
@@ -142,11 +141,35 @@ impl UpdatingSource for HttpProtocol {
                 self.index,
                 len,
                 range.end - range.start,
-                path
+                full_url
             ))));
         }
 
         Ok(Ok((len, Box::pin(AsyncStreamBody(rsp, None)))))
+    }
+}
+
+#[async_trait]
+impl UpdatingSource for HttpProtocol {
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        _config: &GlobalConfig,
+    ) -> DownloadResult {
+        let full_url = if path.is_empty() {
+            self.url.to_owned()
+        } else {
+            format!(
+                "{}{}{}",
+                self.url,
+                if self.url.ends_with("/") { "" } else { "/" },
+                path
+            )
+        };
+
+        self.request_url(&full_url, range, desc).await
     }
 
     fn mask_keyword(&self) -> &str {

@@ -29,6 +29,7 @@ pub struct Network<'a> {
     sources: Vec<Box<dyn UpdatingSource + Sync + Send>>,
     skip_sources: usize,
     config: &'a GlobalConfig,
+    external_http: HttpProtocol,
 }
 
 impl<'a> Network<'a> {
@@ -76,6 +77,7 @@ impl<'a> Network<'a> {
             sources,
             skip_sources: 0,
             config,
+            external_http: HttpProtocol::new_external(config),
         })
     }
 
@@ -136,8 +138,7 @@ impl<'a> Network<'a> {
             return Err(BusinessError::new("外部下载地址必须使用 HTTPS"));
         }
 
-        let mut source = HttpProtocol::new(url, self.config, u32::MAX);
-        match source.request("", &(0..0), desc, self.config).await {
+        match self.external_http.request_url(url, &(0..0), desc).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(error)) => Err(error),
             Err(error) => Err(BusinessError::new(format!(
@@ -158,8 +159,7 @@ impl<'a> Network<'a> {
             return Err(BusinessError::new("外部下载地址必须使用 HTTPS"));
         }
 
-        let mut source = HttpProtocol::new(url, self.config, u32::MAX);
-        match source.request("", &range, desc, self.config).await {
+        match self.external_http.request_url(url, &range, desc).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(error)) => Err(error),
             Err(error) => Err(BusinessError::new(format!(
