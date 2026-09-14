@@ -8,6 +8,8 @@ use crate::network::Network;
 const PROFILE_PATH: &str = "ui-profile.json";
 const CACHE_FILE: &str = "ui-profile-cache.json";
 const MAX_TEXT_BYTES: usize = 240;
+const MAX_ICON_BYTES: usize = 3 * 1024 * 1024;
+const MAX_ICON_DATA_URL_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -123,10 +125,17 @@ pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<Ui
             .request_bytes(&profile.icon, "updater UI icon")
             .await
         {
-            profile.icon_data_url = data_url(&icon).unwrap_or_default();
+            if icon.len() <= MAX_ICON_BYTES {
+                if let Some(encoded) = data_url(&icon) {
+                    if encoded.len() <= MAX_ICON_DATA_URL_BYTES {
+                        profile.icon_data_url = encoded;
+                    }
+                }
+            }
         }
     }
 
+    let profile = validate_profile(profile)?;
     let serialized = serde_json::to_vec(&profile).ok()?;
     let _ = tokio::fs::write(working_dir.join(CACHE_FILE), serialized).await;
     Some(profile)
@@ -169,11 +178,13 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
     if !profile.icon.is_empty() && !safe_asset_path(&profile.icon) {
         return None;
     }
-    if !profile.icon_data_url.is_empty() && !profile.icon_data_url.starts_with("data:image/") {
+    if !profile.icon_data_url.is_empty()
+        && (!profile.icon_data_url.starts_with("data:image/")
+            || profile.icon_data_url.len() > MAX_ICON_DATA_URL_BYTES)
+    {
         return None;
     }
     profile.launch_label_offset_x = profile.launch_label_offset_x.clamp(-24, 24);
-    profile.icon_data_url.truncate(1_400_000);
     Some(profile)
 }
 
@@ -214,23 +225,6 @@ fn data_url(bytes: &[u8]) -> Option<String> {
     ))
 }
 
-pub(crate) fn decode_icon_data_url(value: &str) -> Option<Vec<u8>> {
-    let (header, encoded) = value.split_once(',')?;
-    if !matches!(
-        header,
-        "data:image/png;base64" | "data:image/jpeg;base64" | "data:image/webp;base64"
-    ) {
-        return None;
-    }
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    if bytes.len() > 1_048_576 {
-        return None;
-    }
-    Some(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,16 +241,6 @@ mod tests {
         assert!(data_url(b"\x89PNG\r\n\x1a\nrest")
             .unwrap()
             .starts_with("data:image/png"));
-    }
-
-    #[test]
-    fn decodes_only_supported_icon_data_urls() {
-        let png = data_url(b"\x89PNG\r\n\x1a\nrest").unwrap();
-        assert_eq!(
-            decode_icon_data_url(&png).unwrap(),
-            b"\x89PNG\r\n\x1a\nrest"
-        );
-        assert!(decode_icon_data_url("data:text/html;base64,PHNjcmlwdD4=").is_none());
     }
 
     #[test]
@@ -280,5 +264,15 @@ mod tests {
             validate_profile(profile).unwrap().launch_label_offset_x,
             -24
         );
+    }
+
+    #[test]
+    fn rejects_oversized_cached_icon_instead_of_truncating_it() {
+        let mut profile = UiProfile::default();
+        profile.icon_data_url = format!(
+            "data:image/png;base64,{}",
+            "A".repeat(MAX_ICON_DATA_URL_BYTES)
+        );
+        assert!(validate_profile(profile).is_none());
     }
 }

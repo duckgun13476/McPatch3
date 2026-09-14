@@ -400,7 +400,6 @@ pub struct MainWindow {
     webview_ready: Arc<AtomicBool>,
     visible_frame_generation: Arc<AtomicUsize>,
     profile: RefCell<UiProfile>,
-    profile_icon: RefCell<Option<nwg::Icon>>,
     webview_error: Arc<std::sync::Mutex<Option<String>>>,
     status: RefCell<String>,
     detail: RefCell<String>,
@@ -443,7 +442,6 @@ impl MainWindow {
             webview_ready: webview_ready.clone(),
             visible_frame_generation: visible_frame_generation.clone(),
             profile: RefCell::new(UiProfile::default()),
-            profile_icon: RefCell::new(None),
             webview_error: webview_error.clone(),
             status: RefCell::new("正在检查更新".to_owned()),
             detail: RefCell::new("正在连接更新服务".to_owned()),
@@ -574,7 +572,6 @@ impl MainWindow {
                     self.window.set_text("自动更新器");
                 }
                 Command::SetProfile(profile) => {
-                    self.apply_profile_icon(&profile);
                     *self.profile.borrow_mut() = profile;
                     self.resize_webview_to_client();
                     let status = self.status.borrow();
@@ -942,17 +939,6 @@ impl MainWindow {
         webview
             .evaluate_script(&format!("window.showDialog({payload});"))
             .is_ok()
-    }
-
-    fn apply_profile_icon(&self, profile: &UiProfile) {
-        let Some(bytes) = crate::ui_profile::decode_icon_data_url(&profile.icon_data_url) else {
-            return;
-        };
-        let Ok(icon) = nwg::Icon::from_bin(&bytes) else {
-            return;
-        };
-        self.window.set_icon(Some(&icon));
-        *self.profile_icon.borrow_mut() = Some(icon);
     }
 
     fn resize_webview_to_client(&self) {
