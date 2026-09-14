@@ -337,6 +337,15 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
         log_info("refreshed updater UI profile from update source");
     }
 
+    crate::bootstrap::initialize(
+        &exe_dir,
+        &base_dir,
+        &network,
+        #[cfg(target_os = "windows")]
+        ui_cmd,
+    )
+    .await?;
+
     let version_file = exe_dir.join(&config.version_file_path);
     let current_version = tokio::fs::read_to_string(&version_file)
         .await

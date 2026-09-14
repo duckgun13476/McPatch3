@@ -1,4 +1,5 @@
 pub mod error;
+pub mod bootstrap;
 pub mod global_config;
 pub mod log;
 pub mod network;
@@ -57,7 +58,11 @@ pub fn program() -> McpatchExitCode {
     let window_close_signal = tokio::sync::oneshot::channel::<()>();
 
     #[cfg(target_os = "windows")]
-    let (ui_cmd, _ui) = crate::ui::main_ui::MainWindow::new();
+    let bootstrap_pending = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+        .is_some_and(|path| crate::bootstrap::initialization_requested(&path));
+    let (ui_cmd, _ui) = crate::ui::main_ui::MainWindow::new(bootstrap_pending);
     let panic_info_captured = Arc::new(Mutex::new(Option::<String>::None));
 
     // 捕获异常

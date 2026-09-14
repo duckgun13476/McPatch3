@@ -411,7 +411,7 @@ pub struct MainWindow {
 }
 
 impl MainWindow {
-    pub fn new() -> (MainUiCommand, main_window_ui::MainWindowUi) {
+    pub fn new(initial_keepalive: bool) -> (MainUiCommand, main_window_ui::MainWindowUi) {
         let (dialog_result, receiver) = tokio::sync::mpsc::channel(1000);
         let (sender, commands) = tokio::sync::mpsc::channel(1000);
         let webview_error = Arc::new(std::sync::Mutex::new(None));
@@ -453,7 +453,12 @@ impl MainWindow {
         };
 
         let ui = Self::build_ui(data).unwrap();
-        ui.window.set_visible(false);
+        if initial_keepalive {
+            if let Some(hwnd) = ui.window.handle.hwnd() {
+                Self::set_window_alpha(hwnd, 0);
+            }
+        }
+        ui.window.set_visible(initial_keepalive);
         let window_handle = ui.window.handle.hwnd().expect("main window must be HWND") as isize;
 
         let cmd = MainUiCommand {
