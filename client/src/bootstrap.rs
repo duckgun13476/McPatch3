@@ -1,10 +1,12 @@
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use futures::{stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Semaphore;
 
 use crate::error::{BusinessError, BusinessResult, ResultToBusinessError};
 use crate::log::{log_error, log_info};
@@ -14,7 +16,8 @@ use crate::utility::convert_bytes;
 const MANIFEST_NAME: &str = "bootstrap-manifest.json";
 const STATE_NAME: &str = "bootstrap-state.json";
 const DOWNLOAD_ATTEMPTS: usize = 3;
-const DOWNLOAD_SEGMENTS: usize = 5;
+const DOWNLOAD_CONCURRENCY: usize = 5;
+const FILE_PIECE_LIMIT: u64 = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -25,7 +28,7 @@ struct BootstrapManifest {
     files: Vec<BootstrapFile>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct BootstrapFile {
     path: String,
@@ -37,7 +40,7 @@ struct BootstrapFile {
     external_sources: Vec<ExternalSource>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ExternalSource {
     provider: String,
@@ -120,44 +123,67 @@ pub async fn initialize(
         .await
         .be(|error| format!("创建整合包初始化临时目录失败({temp_root:?})，原因：{error:?}"))?;
 
+    let mut completed_files = 0_usize;
+    let mut pending = Vec::new();
     for (index, file) in manifest.files.iter().enumerate() {
         let target = checked_target(base_dir, &file.path).await?;
-        #[cfg(target_os = "windows")]
-        {
-            ui_cmd
-                .set_label(format!(
-                    "正在初始化整合包 ({}/{})",
-                    index + 1,
-                    manifest.files.len()
-                ))
-                .await;
-            ui_cmd
-                .set_label_secondary(
-                    target
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(&file.path)
-                        .to_owned(),
-                )
-                .await;
-        }
-
         if file_matches(&target, file.length, &file.sha256).await? {
             completed_bytes += file.length;
-            update_progress(
-                completed_bytes,
-                total_bytes,
-                #[cfg(target_os = "windows")]
-                ui_cmd,
-            )
-            .await;
+            completed_files += 1;
             continue;
         }
 
         let temp_path = temp_root.join(format!("{:04}.download", index));
-        download_verified(network, file, &temp_path).await?;
-        install_verified_file(&temp_path, &target).await?;
-        completed_bytes += file.length;
+        pending.push((index, file.clone(), target, temp_path));
+    }
+
+    update_progress(
+        completed_bytes,
+        total_bytes,
+        #[cfg(target_os = "windows")]
+        ui_cmd,
+    )
+    .await;
+
+    #[cfg(target_os = "windows")]
+    {
+        ui_cmd
+            .set_label(format!(
+                "正在初始化整合包 ({completed_files}/{})",
+                manifest.files.len()
+            ))
+            .await;
+        ui_cmd
+            .set_label_secondary(format!("并行下载，最多 {DOWNLOAD_CONCURRENCY} 线程"))
+            .await;
+    }
+
+    let pending_count = pending.len();
+    let permits = Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY));
+    let mut downloads = stream::iter(pending.into_iter().enumerate().map(
+        |(queue_index, (index, file, target, temp_path))| {
+            let permits = Arc::clone(&permits);
+            let remaining_files = pending_count - queue_index;
+            let max_segments =
+                (DOWNLOAD_CONCURRENCY / remaining_files.min(DOWNLOAD_CONCURRENCY)).max(1);
+            async move {
+                download_verified(network, &file, &temp_path, &permits, max_segments).await?;
+                install_verified_file(&temp_path, &target).await?;
+                let name = target
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&file.path)
+                    .to_owned();
+                Ok::<_, BusinessError>((index, file.length, name))
+            }
+        },
+    ))
+    .buffer_unordered(DOWNLOAD_CONCURRENCY);
+
+    while let Some(result) = downloads.next().await {
+        let (_index, downloaded, name) = result?;
+        completed_bytes += downloaded;
+        completed_files += 1;
         update_progress(
             completed_bytes,
             total_bytes,
@@ -165,6 +191,16 @@ pub async fn initialize(
             ui_cmd,
         )
         .await;
+        #[cfg(target_os = "windows")]
+        {
+            ui_cmd
+                .set_label(format!(
+                    "正在初始化整合包 ({completed_files}/{})",
+                    manifest.files.len()
+                ))
+                .await;
+            ui_cmd.set_label_secondary(name).await;
+        }
     }
 
     write_state(&state_path, &manifest_hash).await?;
@@ -315,24 +351,27 @@ async fn download_verified(
     network: &Network<'_>,
     file: &BootstrapFile,
     temp_path: &Path,
+    permits: &Arc<Semaphore>,
+    max_segments: usize,
 ) -> BusinessResult<()> {
     let mut failures = Vec::new();
     for source in file.sources() {
         let mut last_error = String::from("没有发起下载");
         for attempt in 1..=DOWNLOAD_ATTEMPTS {
-            match download_segmented(network, file, source, temp_path).await {
-                Ok(())
+            match download_segmented(network, file, source, temp_path, permits, max_segments).await
+            {
+                Ok(segments)
                     if sha256_file(temp_path)
                         .await?
                         .eq_ignore_ascii_case(&file.sha256) =>
                 {
                     log_info(format!(
-                        "初始化下载成功：{} via {} (attempt {attempt}/{DOWNLOAD_ATTEMPTS}, segments={DOWNLOAD_SEGMENTS})",
-                        file.path, source.provider
+                        "初始化下载成功：{} via {} (attempt {attempt}/{DOWNLOAD_ATTEMPTS}, segments={segments})",
+                        file.path, source.provider,
                     ));
                     return Ok(());
                 }
-                Ok(()) => {
+                Ok(_) => {
                     last_error =
                         format!("CDN 文件 SHA-256 校验失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）")
                 }
@@ -357,8 +396,10 @@ async fn download_segmented(
     file: &BootstrapFile,
     source: &ExternalSource,
     temp_path: &Path,
-) -> BusinessResult<()> {
-    let segment_count = DOWNLOAD_SEGMENTS.min(file.length as usize).max(1);
+    permits: &Arc<Semaphore>,
+    max_segments: usize,
+) -> BusinessResult<usize> {
+    let segment_count = segment_count(file.length, max_segments);
     let segment_size = file.length.div_ceil(segment_count as u64);
     let parts = (0..segment_count)
         .filter_map(|index| {
@@ -379,19 +420,24 @@ async fn download_segmented(
             .iter()
             .cloned()
             .map(|(index, range, part_path)| async move {
+                let _permit = permits
+                    .acquire()
+                    .await
+                    .map_err(|_| BusinessError::new("初始化下载线程池已关闭"))?;
                 let expected = range.end - range.start;
-                let (reported, mut input) = network
-                    .request_external_file_range(
-                        &source.url,
-                        range,
-                        &format!(
-                            "bootstrap segment {}/{} {}",
-                            index + 1,
-                            segment_count,
-                            file.path
-                        ),
-                    )
-                    .await?;
+                let desc = format!(
+                    "bootstrap segment {}/{} {}",
+                    index + 1,
+                    segment_count,
+                    file.path
+                );
+                let (reported, mut input) = if segment_count == 1 {
+                    network.request_external_file(&source.url, &desc).await?
+                } else {
+                    network
+                        .request_external_file_range(&source.url, range, &desc)
+                        .await?
+                };
                 if reported != expected {
                     return Err(BusinessError::new(format!(
                         "CDN 分片长度不符：分片 {} 预期 {expected}，实际 {reported}",
@@ -417,7 +463,7 @@ async fn download_segmented(
                 Ok::<_, BusinessError>(())
             }),
     )
-    .buffer_unordered(DOWNLOAD_SEGMENTS)
+    .buffer_unordered(segment_count)
     .try_collect::<Vec<_>>()
     .await?;
 
@@ -450,7 +496,14 @@ async fn download_segmented(
             file.length
         )));
     }
-    Ok(())
+    Ok(segment_count)
+}
+
+fn segment_count(length: u64, max_segments: usize) -> usize {
+    length
+        .div_ceil(FILE_PIECE_LIMIT)
+        .min(max_segments.max(1) as u64)
+        .max(1) as usize
 }
 
 async fn install_verified_file(temp: &Path, target: &Path) -> BusinessResult<()> {
@@ -529,8 +582,8 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        sha256_bytes, validate_manifest, validate_relative_mod_path, BootstrapFile,
-        BootstrapManifest, ExternalSource,
+        segment_count, sha256_bytes, validate_manifest, validate_relative_mod_path, BootstrapFile,
+        BootstrapManifest, ExternalSource, FILE_PIECE_LIMIT,
     };
 
     #[test]
@@ -558,5 +611,14 @@ mod tests {
             }],
         };
         assert!(validate_manifest(&valid).is_ok());
+    }
+
+    #[test]
+    fn allocates_segments_only_for_large_files_and_available_threads() {
+        assert_eq!(segment_count(FILE_PIECE_LIMIT - 1, 5), 1);
+        assert_eq!(segment_count(FILE_PIECE_LIMIT, 5), 1);
+        assert_eq!(segment_count(FILE_PIECE_LIMIT + 1, 5), 2);
+        assert_eq!(segment_count(FILE_PIECE_LIMIT * 20, 5), 5);
+        assert_eq!(segment_count(FILE_PIECE_LIMIT * 20, 2), 2);
     }
 }
