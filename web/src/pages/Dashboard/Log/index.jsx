@@ -10,8 +10,9 @@ import {
 } from "@/api/task.js";
 import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
 import {Plus, RotateCcw, Undo2, X} from "lucide-react";
-import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
+import {showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
+import {hasVersionWhitespace, nextPatchVersion} from "@/utils/version.js";
 
 const {TextArea} = Input;
 
@@ -20,7 +21,7 @@ const VersionList = ({versionList}) => {
   const content = (
     <div>
       {
-        versionList.map((version, index) => {
+        versionList.slice(0, 10).map((version, index) => {
           return (
             <div key={index} className={"p-2"}>
               <div className={"flex justify-start"}>
@@ -138,12 +139,17 @@ const Index = () => {
   }
 
   const taskPack = async () => {
-    const tempVersion = version === '' ? generateRandomStr() : version
-    const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
-
     if (version === '') {
-      setVersion(tempVersion)
+      messageApi.error('无法生成版本号，请刷新版本列表后重试。')
+      return
     }
+    if (hasVersionWhitespace(version.trim())) {
+      messageApi.error('版本号不能包含内部空白字符。')
+      return
+    }
+
+    const tempVersion = version
+    const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
 
     setPackLoading(true)
     try {
@@ -301,7 +307,15 @@ const Index = () => {
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskUpload} okText="确定" cancelText="取消">
             <Button type="primary" size="large" className="ml-2">上传public目录</Button>
           </Popconfirm>
-          <Button type="primary" size="large" className="ml-2" onClick={() => setPackShow(true)}>打包新版本</Button>
+          <Button type="primary" size="large" className="ml-2" onClick={() => {
+            const nextVersion = nextPatchVersion(versionList[0]?.label)
+            if (nextVersion === '') {
+              messageApi.error('无法从最新版本生成下一个版本号。')
+              return
+            }
+            setVersion(nextVersion)
+            setPackShow(true)
+          }}>打包新版本</Button>
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskRevert} okText="确定" cancelText="取消">
             <Button type="primary" size="large" className="ml-2">回退整个工作空间</Button>
           </Popconfirm>
@@ -349,10 +363,10 @@ const Index = () => {
         onCancel={closePackDialog}>
         {packPreview === null ? (
           <div>
-            <div className="text-base text-gray-400">首次确认只生成变化预览，不会立即打包。</div>
+            <div className="text-base text-gray-400">版本号已自动递增；首次确认只生成变化预览，不会立即打包。</div>
             <Input
               className="mt-5"
-              placeholder="请输入版本号。"
+              placeholder="版本号已按最新版本自动递增。"
               value={version}
               onChange={(e) => setVersion(e.target.value)}/>
             <TextArea

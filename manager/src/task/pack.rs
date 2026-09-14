@@ -64,13 +64,10 @@ pub fn build_pack_plan(
     config: &Config,
     pending: &PendingChanges,
 ) -> Result<PackPlan, String> {
-    let version_label = version_label.trim();
-    if version_label.is_empty() {
-        return Err("版本号不能为空".to_owned());
-    }
+    let version_label = normalize_version_label(version_label)?;
 
     let index_file = IndexFile::load_from_file(&apppath.index_file);
-    if index_file.contains(version_label) {
+    if index_file.contains(&version_label) {
         return Err(format!("版本号已经存在: {version_label}"));
     }
 
@@ -136,7 +133,7 @@ pub fn build_pack_plan(
             preview_change(change, &explicit_paths, existed_before)
         })
         .collect::<Vec<_>>();
-    let fingerprint = fingerprint(version_label, change_logs, &changes);
+    let fingerprint = fingerprint(&version_label, change_logs, &changes);
     let counts = count_changes(&previews);
 
     Ok(PackPlan {
@@ -241,7 +238,13 @@ pub fn task_pack_selected(
     config: &Config,
     console: &Console,
 ) -> u8 {
-    let version_label = version_label.trim().to_owned();
+    let version_label = match normalize_version_label(&version_label) {
+        Ok(label) => label,
+        Err(error) => {
+            console.log_error(error);
+            return 1;
+        }
+    };
     let change_logs = if change_logs.is_empty() {
         std::fs::read_to_string(apppath.working_dir.join("logs.txt"))
             .unwrap_or_else(|_| "没有更新记录".to_owned())
@@ -364,6 +367,17 @@ fn change_writes_path(change: &FileChange, expected: &str) -> bool {
     }
 }
 
+fn normalize_version_label(version_label: &str) -> Result<String, String> {
+    let version_label = version_label.trim();
+    if version_label.is_empty() {
+        return Err("版本号不能为空".to_owned());
+    }
+    if version_label.chars().any(char::is_whitespace) {
+        return Err("版本号不能包含内部空白字符".to_owned());
+    }
+    Ok(version_label.to_owned())
+}
+
 fn preview_change(
     change: &FileChange,
     explicit_paths: &HashSet<String>,
@@ -477,7 +491,9 @@ fn canonical_change(change: &FileChange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{change_id, count_changes, fingerprint, preview_change};
+    use super::{
+        change_id, count_changes, fingerprint, normalize_version_label, preview_change,
+    };
     use crate::core::data::version_meta::FileChange;
     use std::collections::HashSet;
     use std::time::SystemTime;
@@ -525,5 +541,12 @@ mod tests {
         let counts = count_changes(&[added, replaced]);
         assert_eq!(counts.add_file, 1);
         assert_eq!(counts.update_file, 1);
+    }
+
+    #[test]
+    fn version_labels_are_trimmed_but_reject_internal_whitespace() {
+        assert_eq!(normalize_version_label(" v7.7.448 ").unwrap(), "v7.7.448");
+        assert!(normalize_version_label("v7.7. 448").is_err());
+        assert!(normalize_version_label("  ").is_err());
     }
 }

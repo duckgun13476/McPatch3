@@ -26,7 +26,11 @@ pub async fn api_version_list(State(state): State<WebState>) -> Response {
 
     let mut metas = Vec::<VersionMeta>::new();
 
-    for (_index, meta) in index_file.read_all_metas(&state.apppath.public_dir) {
+    for (_index, meta) in index_file
+        .read_all_metas(&state.apppath.public_dir)
+        .into_iter()
+        .rev()
+    {
         metas.push(meta);
     }
     
