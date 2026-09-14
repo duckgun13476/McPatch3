@@ -59,33 +59,48 @@ pub async fn run(params: StartupParameter, ui_cmd: UiCmd<'_>) -> McpatchExitCode
     };
     add_log_handler(Box::new(ConsoleHandler::new(console_log_level)));
 
-    // 将更新主逻辑单独拆到一个方法里以方便处理错误
-    match work(&params, ui_cmd).await {
-        Ok(_) => {
-            log_info("finish");
-
-            McpatchExitCode(0)
-        }
-        Err(e) => {
-            log_error(&e.reason);
-
-            // Every pre-launch update failure is blocking. Launching a client whose
-            // version or files cannot be verified is unsafe.
-            let (title, content) = update_failure_dialog(&e.reason);
-            #[cfg(target_os = "windows")]
-            if params.graphic_mode {
-                ui_cmd
-                    .popup_dialog(DialogContent {
-                        title,
-                        content,
-                        yesno: false,
-                    })
-                    .await;
+    // A network failure remains blocking, but the same window can retry the
+    // complete verified update instead of forcing the player to relaunch it.
+    loop {
+        match work(&params, ui_cmd).await {
+            Ok(_) => {
+                log_info("finish");
+                return McpatchExitCode(0);
             }
-
-            McpatchExitCode(10)
+            Err(e) => {
+                log_error(&e.reason);
+                let retryable = is_network_failure(&e.reason);
+                let (title, content) = update_failure_dialog(&e.reason);
+                #[cfg(target_os = "windows")]
+                if params.graphic_mode {
+                    let retry = ui_cmd
+                        .popup_dialog(DialogContent {
+                            title,
+                            content,
+                            retryable,
+                        })
+                        .await;
+                    if retryable && retry {
+                        log_info("玩家请求重试更新");
+                        continue;
+                    }
+                }
+                return McpatchExitCode(10);
+            }
         }
     }
+}
+
+fn is_network_failure(reason: &str) -> bool {
+    reason.contains("检查更新失败")
+        || reason.contains("元数据下载失败")
+        || reason.contains("文件下载失败")
+        || reason.contains("所有来源均失败")
+        || reason.contains("服务器(")
+        || reason.contains("私有协议")
+        || reason.contains("连接")
+        || reason.contains("timeout")
+        || reason.contains("TimedOut")
 }
 
 /// Produces a player-facing, blocking explanation for every update failure.
@@ -167,19 +182,11 @@ fn update_failure_dialog(reason: &str) -> (String, String) {
             "更新器收到了无法安全解析或校验的更新数据。",
             "这可能是更新器过旧、更新包不完整或服务端正在发布。请稍后重试；持续出现时将详细错误发给管理员。",
         )
-    } else if reason.contains("检查更新失败")
-        || reason.contains("元数据下载失败")
-        || reason.contains("文件下载失败")
-        || reason.contains("服务器(")
-        || reason.contains("私有协议")
-        || reason.contains("连接")
-        || reason.contains("timeout")
-        || reason.contains("TimedOut")
-    {
+    } else if is_network_failure(reason) {
         (
-            "更新被阻止：无法连接更新源",
+            "网络异常",
             "更新器在自动重试后仍无法可靠获取更新数据。",
-            "请检查网络后重新启动客户端。不要在无法确认版本一致时进入游戏；持续出现时将详细错误发给管理员。",
+            "请检查网络后点击“重试”。不要在无法确认版本一致时进入游戏；持续出现时将详细错误发给管理员。",
         )
     } else {
         (
@@ -225,8 +232,9 @@ mod tests {
     fn classifies_network_failures_as_blocking() {
         let dialog = update_failure_dialog("检查更新失败，原因：连接 timeout");
 
-        assert_eq!(dialog.0, "更新被阻止：无法连接更新源");
+        assert_eq!(dialog.0, "网络异常");
         assert!(dialog.1.contains("自动重试后"));
+        assert!(dialog.1.contains("点击“重试”"));
     }
 
     #[test]

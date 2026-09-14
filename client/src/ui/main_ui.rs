@@ -214,7 +214,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('changelogContent').innerHTML = html;
     document.getElementById('footerBar').classList.add('complete');
   };
-  window.showDialog = ({ title, content, yesno }) => {
+  window.showDialog = ({ title, content, retryable }) => {
     document.getElementById('progressCard').style.display = 'none';
     document.getElementById('changelogCard').style.display = 'none';
     document.getElementById('dialogCard').style.display = 'flex';
@@ -224,9 +224,16 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('dialogContent').textContent = content;
     const primary = document.getElementById('dialogPrimary');
     const secondary = document.getElementById('dialogSecondary');
-    primary.textContent = yesno ? '继续' : '关闭更新器';
-    secondary.style.display = yesno ? 'block' : 'none';
+    primary.textContent = retryable ? '重试' : '关闭更新器';
+    secondary.textContent = '关闭更新器';
+    secondary.style.display = retryable ? 'block' : 'none';
     primary.focus();
+  };
+  window.hideDialog = () => {
+    document.getElementById('dialogCard').style.display = 'none';
+    document.getElementById('progressCard').style.display = 'block';
+    document.getElementById('footerBar').style.display = '';
+    document.getElementById('stage').textContent = '正在重试';
   };
   window.reportVisibleFrame = () => requestAnimationFrame(() => requestAnimationFrame(() => window.ipc.postMessage('visible')));
   window.playEnterAnimation = () => {
@@ -250,7 +257,13 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   });
   document.getElementById('windowClose').addEventListener('click', () => window.requestAnimatedClose('close'));
   document.getElementById('completeButton').addEventListener('click', () => window.requestAnimatedClose('close'));
-  document.getElementById('dialogPrimary').addEventListener('click', () => window.requestAnimatedClose('dialog:yes'));
+  document.getElementById('dialogPrimary').addEventListener('click', () => {
+    if (document.getElementById('dialogPrimary').textContent === '重试') {
+      window.ipc.postMessage('dialog:yes');
+    } else {
+      window.requestAnimatedClose('dialog:yes');
+    }
+  });
   document.getElementById('dialogSecondary').addEventListener('click', () => window.requestAnimatedClose('dialog:no'));
   window.ipc.postMessage('ready');
 </script>
@@ -274,8 +287,8 @@ pub struct DialogContent {
     /// 内容
     pub content: String,
 
-    /// 是否显示Yes+No双按钮，还是仅显示Yes按钮
-    pub yesno: bool,
+    /// 网络异常时显示“重试”和“关闭更新器”，其他错误仅允许关闭。
+    pub retryable: bool,
 }
 
 struct ChangelogView {
@@ -331,6 +344,9 @@ enum Command {
 
     /// 弹出一个模态对话框
     PupopDialog(DialogContent),
+
+    /// 收起可恢复错误页并重新显示下载进度。
+    HideDialog,
 
     /// 在主窗口内展示更新日志
     ShowChangelog {
@@ -644,7 +660,7 @@ impl MainWindow {
                         let params = nwg::MessageParams {
                             title: &dialog.title,
                             content: &dialog.content,
-                            buttons: match dialog.yesno {
+                            buttons: match dialog.retryable {
                                 true => nwg::MessageButtons::OkCancel,
                                 false => nwg::MessageButtons::Ok,
                             },
@@ -654,6 +670,11 @@ impl MainWindow {
                         let accepted =
                             matches!(choice, nwg::MessageChoice::Yes | nwg::MessageChoice::Ok);
                         let _ = self.dialog_result.blocking_send(accepted);
+                    }
+                }
+                Command::HideDialog => {
+                    if let Some(webview) = self.webview.borrow().as_ref() {
+                        let _ = webview.evaluate_script("window.hideDialog();");
                     }
                 }
                 Command::ShowChangelog {
@@ -939,7 +960,7 @@ impl MainWindow {
         let payload = serde_json::json!({
             "title": &dialog.title,
             "content": &dialog.content,
-            "yesno": dialog.yesno,
+            "retryable": dialog.retryable,
         });
         webview
             .evaluate_script(&format!("window.showDialog({payload});"))
@@ -1171,6 +1192,7 @@ impl MainUiCommand {
     }
 
     pub async fn popup_dialog(&self, dialog: DialogContent) -> bool {
+        let retryable = dialog.retryable;
         {
             let this = self.inner.lock().await;
             this.sender
@@ -1181,7 +1203,12 @@ impl MainUiCommand {
         }
         self.set_visible(true).await;
         let mut this = self.inner.lock().await;
-        this.receiver.recv().await.unwrap()
+        let accepted = this.receiver.recv().await.unwrap();
+        if accepted && retryable {
+            this.sender.send(Command::HideDialog).await.unwrap();
+            this.notice_sender.notice();
+        }
+        accepted
     }
 
     pub async fn show_changelog(&self, title: String, summary: String, content: String) {
