@@ -8,8 +8,9 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::common::file_hash::calculate_hash_async;
+use crate::common::file_hash::{calculate_hash_async, calculate_sha256_async};
 use crate::data::index_file::IndexFile;
+use crate::data::version_meta::ClientHashDeletion;
 use crate::data::version_meta::ExternalSource;
 use crate::data::version_meta::FileChange;
 use crate::data::version_meta::VersionMeta;
@@ -496,6 +497,7 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
         let mut delete_folders = Vec::<String>::new();
         let mut delete_files = Vec::<String>::new();
         let mut move_files = Vec::<MoveFile>::new();
+        let mut hash_deletions = Vec::<ClientHashDeletion>::new();
 
         #[cfg(target_os = "windows")]
         ui_cmd.set_label("正在收集要更新的文件".to_owned()).await;
@@ -600,7 +602,21 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
                     }
                 }
             }
+            for deletion in &meta.metadata.client_hash_deletions {
+                if !hash_deletions
+                    .iter()
+                    .any(|existing| existing.sha256 == deletion.sha256)
+                {
+                    hash_deletions.push(deletion.clone());
+                }
+            }
         }
+
+        let mut protected_update_paths = update_files
+            .iter()
+            .map(|update| update.path.clone())
+            .collect::<std::collections::HashSet<_>>();
+        protected_update_paths.extend(move_files.iter().map(|move_file| move_file.to.clone()));
 
         // let mut cnt = 0;
         // for e in &update_files {
@@ -971,7 +987,12 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
             }
         }
 
-        // 3.处理要删除的文件
+        // 3.删除管理员明确登记、且内容指纹完全一致的旧模组。
+        for deletion in &hash_deletions {
+            delete_matching_client_mods(&base_dir, deletion, &protected_update_paths).await?;
+        }
+
+        // 4.处理要删除的文件
         #[cfg(target_os = "windows")]
         ui_cmd.set_label("正在处理旧文件和旧目录".to_owned()).await;
 
@@ -987,7 +1008,7 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
             }
         }
 
-        // 4.处理要删除的目录
+        // 5.处理要删除的目录
         for path in delete_folders {
             log_debug(&format!("delete directory {}", path));
 
@@ -1092,6 +1113,76 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
     Ok(())
 }
 
+async fn delete_matching_client_mods(
+    base_dir: &Path,
+    deletion: &ClientHashDeletion,
+    protected_update_paths: &std::collections::HashSet<String>,
+) -> BusinessResult<()> {
+    if deletion.search_root != ".minecraft/mods" {
+        return Err(BusinessError::new(format!(
+            "拒绝不安全的哈希删除扫描目录: {}",
+            deletion.search_root
+        )));
+    }
+    let root = base_dir.join(&deletion.search_root);
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(BusinessError::new(format!(
+                "读取客户端模组目录失败({root:?})，原因：{error:?}"
+            )))
+        }
+    };
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .be(|error| format!("读取客户端模组条目失败({root:?})，原因：{error:?}"))?
+    {
+        let file_type = entry.file_type().await.be(|error| {
+            format!(
+                "读取客户端模组类型失败({:?})，原因：{error:?}",
+                entry.path()
+            )
+        })?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let metadata = entry.metadata().await.be(|error| {
+            format!(
+                "读取客户端模组信息失败({:?})，原因：{error:?}",
+                entry.path()
+            )
+        })?;
+        if metadata.len() != deletion.len {
+            continue;
+        }
+        let relative = format!(
+            "{}/{}",
+            deletion.search_root,
+            entry.file_name().to_string_lossy()
+        );
+        if protected_update_paths.contains(&relative) {
+            continue;
+        }
+        let mut file = tokio::fs::File::open(entry.path())
+            .await
+            .be(|error| format!("打开待核验旧模组失败({:?})，原因：{error:?}", entry.path()))?;
+        if calculate_sha256_async(&mut file).await != deletion.sha256 {
+            continue;
+        }
+        log_info(format!(
+            "按 SHA-256 删除客户端旧模组: {:?} (登记名称: {})",
+            entry.path(),
+            deletion.name_hint
+        ));
+        tokio::fs::remove_file(entry.path())
+            .await
+            .be(|error| format!("删除客户端旧模组失败({:?})，原因：{error:?}", entry.path()))?;
+    }
+    Ok(())
+}
+
 /// 获取更新起始目录
 async fn get_base_dir(
     params: &StartupParameter,
@@ -1162,4 +1253,45 @@ async fn get_working_dir(_params: &StartupParameter) -> BusinessResult<PathBuf> 
         .be(|e| format!("创建工作目录失败，原因：{:?}", e))?;
 
     Ok(working_dir)
+}
+
+#[cfg(test)]
+mod hash_deletion_tests {
+    use super::delete_matching_client_mods;
+    use crate::data::version_meta::ClientHashDeletion;
+    use sha2::{Digest, Sha256};
+    use std::collections::HashSet;
+
+    #[tokio::test]
+    async fn deletes_only_exact_unprotected_mod_hashes() {
+        let base = std::env::temp_dir().join(format!("mcpatch-hash-delete-{}", std::process::id()));
+        let mods = base.join(".minecraft/mods");
+        tokio::fs::create_dir_all(&mods).await.unwrap();
+        let obsolete = b"obsolete jar fixture";
+        tokio::fs::write(mods.join("old.jar"), obsolete)
+            .await
+            .unwrap();
+        tokio::fs::write(mods.join("different.jar"), b"different")
+            .await
+            .unwrap();
+        tokio::fs::write(mods.join("protected.jar"), obsolete)
+            .await
+            .unwrap();
+
+        let deletion = ClientHashDeletion {
+            sha256: format!("{:x}", Sha256::digest(obsolete)),
+            len: obsolete.len() as u64,
+            name_hint: "uploaded-old.jar".to_owned(),
+            search_root: ".minecraft/mods".to_owned(),
+        };
+        let protected = HashSet::from([".minecraft/mods/protected.jar".to_owned()]);
+        delete_matching_client_mods(&base, &deletion, &protected)
+            .await
+            .unwrap();
+
+        assert!(!mods.join("old.jar").exists());
+        assert!(mods.join("different.jar").exists());
+        assert!(mods.join("protected.jar").exists());
+        tokio::fs::remove_dir_all(base).await.unwrap();
+    }
 }

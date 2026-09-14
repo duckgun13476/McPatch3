@@ -5,6 +5,7 @@ use std::io::Read;
 use crc::Crc;
 use crc::CRC_16_IBM_SDLC;
 use crc::CRC_64_XZ;
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
@@ -60,4 +61,18 @@ pub async fn calculate_hash_async(read: &mut (impl AsyncRead + Unpin)) -> String
     }
 
     format!("{:016x}_{:04x}", &crc64.finalize(), crc16.finalize())
+}
+
+pub async fn calculate_sha256_async(read: &mut (impl AsyncRead + Unpin)) -> String {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    tokio::pin!(read);
+    loop {
+        let count = read.read(&mut buffer).await.unwrap();
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    format!("{:x}", hasher.finalize())
 }
