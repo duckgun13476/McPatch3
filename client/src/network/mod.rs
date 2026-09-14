@@ -147,6 +147,28 @@ impl<'a> Network<'a> {
         }
     }
 
+    pub async fn request_external_file_range(
+        &self,
+        url: &str,
+        range: Range<u64>,
+        desc: &str,
+    ) -> BusinessResult<(u64, Pin<Box<dyn AsyncRead + Send>>)> {
+        let parsed = reqwest::Url::parse(url).be(|e| format!("外部下载地址无效，原因：{:?}", e))?;
+        if parsed.scheme() != "https" {
+            return Err(BusinessError::new("外部下载地址必须使用 HTTPS"));
+        }
+
+        let mut source = HttpProtocol::new(url, self.config, u32::MAX);
+        match source.request("", &range, desc, self.config).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(BusinessError::new(format!(
+                "外部下载连接失败，原因：{:?}",
+                error
+            ))),
+        }
+    }
+
     pub async fn request_file(
         &mut self,
         path: &str,

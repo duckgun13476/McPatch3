@@ -23,6 +23,7 @@ sha1 = "0.10.6"
 sha2 = "0.10.8"
 pulldown-cmark = "0.13"
 ammonia = "4.1"
+futures = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 nwg = {package = "native-windows-gui", version = "1.0.13"}

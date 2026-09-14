@@ -1,18 +1,20 @@
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
+use futures::{stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::error::{BusinessError, BusinessResult, ResultToBusinessError};
-use crate::log::{log_info, log_error};
+use crate::log::{log_error, log_info};
 use crate::network::Network;
 use crate::utility::convert_bytes;
 
 const MANIFEST_NAME: &str = "bootstrap-manifest.json";
 const STATE_NAME: &str = "bootstrap-state.json";
 const DOWNLOAD_ATTEMPTS: usize = 3;
+const DOWNLOAD_SEGMENTS: usize = 5;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -29,7 +31,10 @@ struct BootstrapFile {
     path: String,
     length: u64,
     sha256: String,
-    external_source: ExternalSource,
+    #[serde(default)]
+    external_source: Option<ExternalSource>,
+    #[serde(default)]
+    external_sources: Vec<ExternalSource>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +170,9 @@ pub async fn initialize(
     write_state(&state_path, &manifest_hash).await?;
     if let Err(error) = tokio::fs::remove_dir_all(&temp_root).await {
         if error.kind() != ErrorKind::NotFound {
-            log_error(format!("清理整合包初始化临时目录失败({temp_root:?})：{error:?}"));
+            log_error(format!(
+                "清理整合包初始化临时目录失败({temp_root:?})：{error:?}"
+            ));
         }
     }
     log_info(format!(
@@ -214,11 +221,15 @@ fn validate_manifest(manifest: &BootstrapManifest) -> BusinessResult<()> {
     }
     for file in &manifest.files {
         validate_relative_mod_path(&file.path)?;
+        let sources = file.sources();
         if file.length == 0
             || file.sha256.len() != 64
             || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || !matches!(file.external_source.provider.as_str(), "modrinth" | "curseforge")
-            || !file.external_source.url.starts_with("https://")
+            || sources.is_empty()
+            || sources.iter().any(|source| {
+                !matches!(source.provider.as_str(), "modrinth" | "curseforge")
+                    || !source.url.starts_with("https://")
+            })
         {
             return Err(BusinessError::new(format!(
                 "整合包初始化清单含有无效文件记录：{}",
@@ -227,6 +238,26 @@ fn validate_manifest(manifest: &BootstrapManifest) -> BusinessResult<()> {
         }
     }
     Ok(())
+}
+
+impl BootstrapFile {
+    fn sources(&self) -> Vec<&ExternalSource> {
+        let mut sources = Vec::new();
+        for source in &self.external_sources {
+            if !sources
+                .iter()
+                .any(|existing: &&ExternalSource| existing.url == source.url)
+            {
+                sources.push(source);
+            }
+        }
+        if let Some(source) = &self.external_source {
+            if !sources.iter().any(|existing| existing.url == source.url) {
+                sources.push(source);
+            }
+        }
+        sources
+    }
 }
 
 fn validate_relative_mod_path(path: &str) -> BusinessResult<()> {
@@ -285,73 +316,141 @@ async fn download_verified(
     file: &BootstrapFile,
     temp_path: &Path,
 ) -> BusinessResult<()> {
-    let mut last_error = String::from("没有可用下载源");
-    for attempt in 1..=DOWNLOAD_ATTEMPTS {
-        let request = network
-            .request_external_file(
-                &file.external_source.url,
-                &format!("bootstrap {}", file.path),
-            )
-            .await;
-        let (reported_len, mut stream) = match request {
-            Ok(result) => result,
-            Err(error) => {
-                last_error = error.reason;
-                continue;
+    let mut failures = Vec::new();
+    for source in file.sources() {
+        let mut last_error = String::from("没有发起下载");
+        for attempt in 1..=DOWNLOAD_ATTEMPTS {
+            match download_segmented(network, file, source, temp_path).await {
+                Ok(())
+                    if sha256_file(temp_path)
+                        .await?
+                        .eq_ignore_ascii_case(&file.sha256) =>
+                {
+                    log_info(format!(
+                        "初始化下载成功：{} via {} (attempt {attempt}/{DOWNLOAD_ATTEMPTS}, segments={DOWNLOAD_SEGMENTS})",
+                        file.path, source.provider
+                    ));
+                    return Ok(());
+                }
+                Ok(()) => {
+                    last_error =
+                        format!("CDN 文件 SHA-256 校验失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）")
+                }
+                Err(error) => last_error = error.reason,
             }
-        };
-        if reported_len != file.length {
-            last_error = format!("CDN 长度不符：预期 {}，实际 {reported_len}", file.length);
-            continue;
         }
-        let mut output = tokio::fs::File::create(temp_path)
-            .await
-            .be(|error| format!("创建初始化下载文件失败({temp_path:?})，原因：{error:?}"))?;
-        let mut written = 0_u64;
-        let mut oversized = false;
-        let mut buffer = [0_u8; 64 * 1024];
-        loop {
-            let read = stream
-                .read(&mut buffer)
-                .await
-                .be(|error| format!("读取初始化下载流失败({})，原因：{error:?}", file.path))?;
-            if read == 0 {
-                break;
-            }
-            written += read as u64;
-            if written > file.length {
-                last_error = "CDN 返回内容超过清单长度".to_owned();
-                oversized = true;
-                break;
-            }
-            output
-                .write_all(&buffer[..read])
-                .await
-                .be(|error| format!("写入初始化下载文件失败({temp_path:?})，原因：{error:?}"))?;
-        }
-        output
-            .flush()
-            .await
-            .be(|error| format!("刷新初始化下载文件失败({temp_path:?})，原因：{error:?}"))?;
-        drop(output);
-        if !oversized
-            && written == file.length
-            && sha256_file(temp_path).await?.eq_ignore_ascii_case(&file.sha256)
-        {
-            log_info(format!(
-                "初始化下载成功：{} via {} (attempt {attempt}/{DOWNLOAD_ATTEMPTS})",
-                file.path, file.external_source.provider
-            ));
-            return Ok(());
-        }
-        if !oversized {
-            last_error = format!("CDN 文件校验失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）");
-        }
+        failures.push(format!("{}: {}", source.provider, last_error));
+        log_error(format!(
+            "初始化下载源失败，准备切换：{} via {}",
+            file.path, source.provider
+        ));
     }
     Err(BusinessError::new(format!(
-        "整合包初始化下载失败({})，来源：{}，原因：{}",
-        file.path, file.external_source.provider, last_error
+        "整合包初始化下载失败({})，所有来源均失败：{}",
+        file.path,
+        failures.join("；")
     )))
+}
+
+async fn download_segmented(
+    network: &Network<'_>,
+    file: &BootstrapFile,
+    source: &ExternalSource,
+    temp_path: &Path,
+) -> BusinessResult<()> {
+    let segment_count = DOWNLOAD_SEGMENTS.min(file.length as usize).max(1);
+    let segment_size = file.length.div_ceil(segment_count as u64);
+    let parts = (0..segment_count)
+        .filter_map(|index| {
+            let start = index as u64 * segment_size;
+            (start < file.length).then(|| {
+                let end = (start + segment_size).min(file.length);
+                (
+                    index,
+                    start..end,
+                    temp_path.with_extension(format!("part{index}")),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    stream::iter(
+        parts
+            .iter()
+            .cloned()
+            .map(|(index, range, part_path)| async move {
+                let expected = range.end - range.start;
+                let (reported, mut input) = network
+                    .request_external_file_range(
+                        &source.url,
+                        range,
+                        &format!(
+                            "bootstrap segment {}/{} {}",
+                            index + 1,
+                            segment_count,
+                            file.path
+                        ),
+                    )
+                    .await?;
+                if reported != expected {
+                    return Err(BusinessError::new(format!(
+                        "CDN 分片长度不符：分片 {} 预期 {expected}，实际 {reported}",
+                        index + 1
+                    )));
+                }
+                let mut output = tokio::fs::File::create(&part_path)
+                    .await
+                    .be(|error| format!("创建初始化分片失败({part_path:?})，原因：{error:?}"))?;
+                let copied = tokio::io::copy(&mut input, &mut output)
+                    .await
+                    .be(|error| format!("写入初始化分片失败({part_path:?})，原因：{error:?}"))?;
+                output
+                    .flush()
+                    .await
+                    .be(|error| format!("刷新初始化分片失败({part_path:?})，原因：{error:?}"))?;
+                if copied != expected {
+                    return Err(BusinessError::new(format!(
+                        "CDN 分片内容不完整：分片 {} 预期 {expected}，实际 {copied}",
+                        index + 1
+                    )));
+                }
+                Ok::<_, BusinessError>(())
+            }),
+    )
+    .buffer_unordered(DOWNLOAD_SEGMENTS)
+    .try_collect::<Vec<_>>()
+    .await?;
+
+    let mut output = tokio::fs::File::create(temp_path)
+        .await
+        .be(|error| format!("创建初始化合并文件失败({temp_path:?})，原因：{error:?}"))?;
+    for (_, _, part_path) in &parts {
+        let mut input = tokio::fs::File::open(part_path)
+            .await
+            .be(|error| format!("打开初始化分片失败({part_path:?})，原因：{error:?}"))?;
+        tokio::io::copy(&mut input, &mut output)
+            .await
+            .be(|error| format!("合并初始化分片失败({part_path:?})，原因：{error:?}"))?;
+    }
+    output
+        .flush()
+        .await
+        .be(|error| format!("刷新初始化合并文件失败({temp_path:?})，原因：{error:?}"))?;
+    drop(output);
+    for (_, _, part_path) in parts {
+        let _ = tokio::fs::remove_file(part_path).await;
+    }
+    let actual = tokio::fs::metadata(temp_path)
+        .await
+        .be(|error| format!("读取初始化合并文件失败({temp_path:?})，原因：{error:?}"))?
+        .len();
+    if actual != file.length {
+        return Err(BusinessError::new(format!(
+            "CDN 合并长度不符：预期 {}，实际 {actual}",
+            file.length
+        )));
+    }
+    Ok(())
 }
 
 async fn install_verified_file(temp: &Path, target: &Path) -> BusinessResult<()> {
@@ -429,7 +528,10 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sha256_bytes, validate_manifest, validate_relative_mod_path, BootstrapFile, BootstrapManifest, ExternalSource};
+    use super::{
+        sha256_bytes, validate_manifest, validate_relative_mod_path, BootstrapFile,
+        BootstrapManifest, ExternalSource,
+    };
 
     #[test]
     fn restricts_bootstrap_targets_to_direct_mod_jars() {
@@ -448,10 +550,11 @@ mod tests {
                 path: ".minecraft/mods/example.jar".to_owned(),
                 length: 3,
                 sha256: sha256_bytes(b"abc"),
-                external_source: ExternalSource {
+                external_source: Some(ExternalSource {
                     provider: "modrinth".to_owned(),
                     url: "https://cdn.example/example.jar".to_owned(),
-                },
+                }),
+                external_sources: Vec::new(),
             }],
         };
         assert!(validate_manifest(&valid).is_ok());
