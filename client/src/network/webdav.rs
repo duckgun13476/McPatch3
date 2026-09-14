@@ -36,7 +36,7 @@ impl Webdav {
         let user = parsed[0].to_owned();
         let pass = parsed[1].to_owned();
         let host = format!("{}{}", scheme, parsed[2]);
-        
+
         // 添加自定义协议头
         let mut def_headers = HeaderMap::new();
 
@@ -47,7 +47,7 @@ impl Webdav {
             let v = header.1.to_owned().parse().unwrap();
             def_headers.insert(k, v);
         }
-        
+
         let reqwest_client = reqwest_dav::re_exports::reqwest::ClientBuilder::new()
             .default_headers(def_headers)
             .connect_timeout(Duration::from_millis(config.http_timeout as u64))
@@ -69,13 +69,23 @@ impl Webdav {
             Err(_) => "".to_owned(),
         };
 
-        Self { client, index, mask_keyword }
+        Self {
+            client,
+            index,
+            mask_keyword,
+        }
     }
 }
 
 #[async_trait]
 impl UpdatingSource for Webdav {
-    async fn request(&mut self, path: &str, range: &Range<u64>, desc: &str, _config: &GlobalConfig) -> DownloadResult {
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        _config: &GlobalConfig,
+    ) -> DownloadResult {
         let partial_file = range.start > 0 || range.end > 0;
 
         if partial_file {
@@ -85,10 +95,11 @@ impl UpdatingSource for Webdav {
         let req = match self.client.start_request(Method::GET, &path).await {
             Ok(mut builder) => {
                 if partial_file {
-                    builder = builder.header("Range", format!("bytes={}-{}", range.start, range.end - 1));
+                    builder =
+                        builder.header("Range", format!("bytes={}-{}", range.start, range.end - 1));
                 }
                 builder
-            },
+            }
             Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
         };
 
@@ -107,21 +118,36 @@ impl UpdatingSource for Webdav {
 
             body.truncate(300);
 
-            return Ok(Err(BusinessError::new(format!("服务器({})返回了{}而不是206: {} ({})\n{}", self.index, code, path, desc, body))));
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回了{}而不是206: {} ({})\n{}",
+                self.index, code, path, desc, body
+            ))));
         }
 
         let len = match rsp.content_length() {
             Some(len) => len,
-            None => return Ok(Err(BusinessError::new(format!("服务器({})没有返回content-length头: {} ({})", self.index, path, desc)))),
+            None => {
+                return Ok(Err(BusinessError::new(format!(
+                    "服务器({})没有返回content-length头: {} ({})",
+                    self.index, path, desc
+                ))))
+            }
         };
 
         if partial_file && len != range.end - range.start {
-            return Ok(Err(BusinessError::new(format!("服务器({})返回的content-length头 {} 不等于{}: {} ({})", self.index, len, range.end - range.start, path, desc))));
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回的content-length头 {} 不等于{}: {} ({})",
+                self.index,
+                len,
+                range.end - range.start,
+                path,
+                desc
+            ))));
         }
-        
+
         Ok(Ok((len, Box::pin(AsyncStreamBody(rsp, None)))))
     }
-    
+
     fn mask_keyword(&self) -> &str {
         &self.mask_keyword
     }

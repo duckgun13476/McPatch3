@@ -6,9 +6,9 @@ use std::path::Path;
 use json::JsonValue;
 
 /// 代表一个版本的索引信息
-/// 
+///
 /// 保存时会被序列化成一个Json对象
-/// 
+///
 /// ```json
 /// {
 ///     "label": "1.2",
@@ -38,20 +38,21 @@ pub struct VersionIndex {
 
 /// 代表一个索引文件
 pub struct IndexFile {
-    versions: Vec<VersionIndex>
+    versions: Vec<VersionIndex>,
 }
 
 impl IndexFile {
     /// 创建一个IndexFile
     pub fn new() -> Self {
-        Self { versions: Vec::new() }
+        Self {
+            versions: Vec::new(),
+        }
     }
 
     /// 从文件加载索引文件
     pub fn load_from_file(index_file: &Path) -> Self {
-        let content = std::fs::read_to_string(index_file)
-            .unwrap_or_else(|_| "[]".to_owned());
-        
+        let content = std::fs::read_to_string(index_file).unwrap_or_else(|_| "[]".to_owned());
+
         Self::load_from_json(&content)
     }
 
@@ -67,7 +68,13 @@ impl IndexFile {
             let len = v["length"].as_u32().unwrap();
             let hash = v["hash"].as_str().unwrap().to_owned();
 
-            versions.push(VersionIndex { label, filename, len, offset, hash })
+            versions.push(VersionIndex {
+                label,
+                filename,
+                len,
+                offset,
+                hash,
+            })
         }
 
         Self { versions }
@@ -85,7 +92,7 @@ impl IndexFile {
             obj.insert("offset", v.offset).unwrap();
             obj.insert("length", v.len).unwrap();
             obj.insert("hash", v.hash.to_owned()).unwrap();
-            
+
             root.push(obj).unwrap();
         }
 

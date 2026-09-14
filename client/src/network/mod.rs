@@ -1,7 +1,7 @@
+pub mod alist;
 pub mod http;
 pub mod private;
 pub mod webdav;
-pub mod alist;
 
 use std::ops::Range;
 use std::pin::Pin;
@@ -17,10 +17,10 @@ use crate::global_config::GlobalConfig;
 use crate::log::log_debug;
 use crate::log::log_error;
 use crate::log::log_info;
+use crate::network::alist::AlistProtocol;
 use crate::network::http::HttpProtocol;
 use crate::network::private::PrivateProtocol;
 use crate::network::webdav::Webdav;
-use crate::network::alist::AlistProtocol;
 use crate::utility::is_running_under_cargo;
 
 pub type DownloadResult = std::io::Result<BusinessResult<(u64, Pin<Box<dyn AsyncRead + Send>>)>>;
@@ -46,11 +46,19 @@ impl<'a> Network<'a> {
             if url.starts_with("http://") || url.starts_with("https://") {
                 sources.push(Box::new(HttpProtocol::new(url, &config, index)))
             } else if url.starts_with("mcpatch://") {
-                sources.push(Box::new(PrivateProtocol::new(&url["mcpatch://".len()..], &config, index)))
+                sources.push(Box::new(PrivateProtocol::new(
+                    &url["mcpatch://".len()..],
+                    &config,
+                    index,
+                )))
             } else if url.starts_with("webdav://") || url.starts_with("webdavs://") {
                 sources.push(Box::new(Webdav::new(&url, &config, index)))
             } else if url.starts_with("alist://") {
-                sources.push(Box::new(AlistProtocol::new(&url["alist://".len()..], &config, index)))
+                sources.push(Box::new(AlistProtocol::new(
+                    &url["alist://".len()..],
+                    &config,
+                    index,
+                )))
             } else {
                 log_info(format!("unknown url: {}", url));
             }
@@ -64,34 +72,108 @@ impl<'a> Network<'a> {
             return Err(BusinessError::new("没有有效的服务器地址可以使用"));
         }
 
-        Ok(Network { sources, skip_sources: 0, config })
+        Ok(Network {
+            sources,
+            skip_sources: 0,
+            config,
+        })
     }
 
-    pub async fn request_text(&mut self, path: &str, range: Range<u64>, desc: impl AsRef<str>) -> BusinessResult<String> {
+    pub async fn request_text(
+        &mut self,
+        path: &str,
+        range: Range<u64>,
+        desc: impl AsRef<str>,
+    ) -> BusinessResult<String> {
         match self.request_file(path, range, desc.as_ref()).await {
             Ok(ok) => {
                 let (len, mut data) = ok;
-                
+
                 let mut text = String::with_capacity(len as usize);
-                data.read_to_string(&mut text).await.be(|e| format!("网络数据无法解码为utf8字符串({})，原因：{:?}", desc.as_ref(), e))?;
+                data.read_to_string(&mut text).await.be(|e| {
+                    format!(
+                        "网络数据无法解码为utf8字符串({})，原因：{:?}",
+                        desc.as_ref(),
+                        e
+                    )
+                })?;
                 Ok(text)
-            },
+            }
             Err(err) => return Err(err),
         }
     }
 
-    pub async fn request_file(&mut self, path: &str, range: Range<u64>, desc: &str) -> BusinessResult<(u64, Pin<Box<dyn AsyncRead + Send>>)> {
+    pub async fn request_bytes(
+        &mut self,
+        path: &str,
+        desc: impl AsRef<str>,
+    ) -> BusinessResult<Vec<u8>> {
+        let (len, mut data) = self.request_file(path, 0..0, desc.as_ref()).await?;
+        if len > 1_048_576 {
+            return Err(BusinessError::new(format!(
+                "网络资源过大（{} bytes）：{}",
+                len,
+                desc.as_ref()
+            )));
+        }
+
+        let mut bytes = Vec::with_capacity(len as usize);
+        data.read_to_end(&mut bytes)
+            .await
+            .be(|e| format!("网络数据读取失败（{}），原因：{:?}", desc.as_ref(), e))?;
+        Ok(bytes)
+    }
+
+    pub async fn request_external_file(
+        &self,
+        url: &str,
+        desc: &str,
+    ) -> BusinessResult<(u64, Pin<Box<dyn AsyncRead + Send>>)> {
+        let parsed = reqwest::Url::parse(url).be(|e| format!("外部下载地址无效，原因：{:?}", e))?;
+        if parsed.scheme() != "https" {
+            return Err(BusinessError::new("外部下载地址必须使用 HTTPS"));
+        }
+
+        let mut source = HttpProtocol::new(url, self.config, u32::MAX);
+        match source.request("", &(0..0), desc, self.config).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(BusinessError::new(format!(
+                "外部下载连接失败，原因：{:?}",
+                error
+            ))),
+        }
+    }
+
+    pub async fn request_file(
+        &mut self,
+        path: &str,
+        range: Range<u64>,
+        desc: &str,
+    ) -> BusinessResult<(u64, Pin<Box<dyn AsyncRead + Send>>)> {
         assert!(range.end >= range.start);
 
         let mut io_error = Option::<(std::io::Error, String)>::None;
-        
-        for (index, source) in (&mut self.sources[self.skip_sources..]).iter_mut().enumerate() {
+
+        for (index, source) in (&mut self.sources[self.skip_sources..])
+            .iter_mut()
+            .enumerate()
+        {
             let url_index = self.skip_sources + index;
 
-            log_debug(format!("+ request {} {}+{} ({}) url: {}", path, range.start, range.end - range.start, desc, url_index));
+            log_debug(format!(
+                "+ request {} {}+{} ({}) url: {}",
+                path,
+                range.start,
+                range.end - range.start,
+                desc,
+                url_index
+            ));
 
             for i in 0..self.config.http_retries + 1 {
-                let r = source.request(path, &range, desc.as_ref(), self.config).await;
+                let r = source
+                    .request(path, &range, desc.as_ref(), self.config)
+                    .await;
 
                 match r {
                     // io错误没有
@@ -102,29 +184,40 @@ impl<'a> Network<'a> {
 
                             // 如果遇到业务错误，也参与重试
                             Err(err) => {
-                                io_error = Some((std::io::Error::new(std::io::ErrorKind::Other, err.reason), source.mask_keyword().to_owned()));
-                                
+                                io_error = Some((
+                                    std::io::Error::new(std::io::ErrorKind::Other, err.reason),
+                                    source.mask_keyword().to_owned(),
+                                ));
+
                                 if i != self.config.http_retries {
-                                    log_error(format!("url {} encountered an business error, retrying...", url_index));
+                                    log_error(format!(
+                                        "url {} encountered an business error, retrying...",
+                                        url_index
+                                    ));
                                 }
-                            },
+                            }
                         }
-                    },
+                    }
 
                     // 遇到io错误
                     Err(err) => {
                         io_error = Some((err, source.mask_keyword().to_owned()));
-                        
+
                         if i != self.config.http_retries {
-                            log_error(format!("url {} encountered an io error, retrying...", url_index));
+                            log_error(format!(
+                                "url {} encountered an io error, retrying...",
+                                url_index
+                            ));
                         }
-                    },
+                    }
                 }
             }
         }
-        
+
         let (err, kw) = io_error.unwrap();
-        return Err(BusinessError::new(format!("{:?}", err).replace(&kw, "[主机部分]")));
+        return Err(BusinessError::new(
+            format!("{:?}", err).replace(&kw, "[主机部分]"),
+        ));
     }
 
     pub fn advance_source(&mut self) {
@@ -135,7 +228,13 @@ impl<'a> Network<'a> {
 #[async_trait]
 pub trait UpdatingSource {
     /// 发起一个文件请求
-    async fn request(&mut self, path: &str, range: &Range<u64>, desc: &str, config: &GlobalConfig) -> DownloadResult;
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        config: &GlobalConfig,
+    ) -> DownloadResult;
 
     /// 返回主机部分的关键字，用来日志中的字符串打码，遮住其中的主机部分
     fn mask_keyword(&self) -> &str;

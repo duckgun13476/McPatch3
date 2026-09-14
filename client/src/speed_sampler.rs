@@ -31,15 +31,18 @@ impl SpeedCalculator {
         if self.frames.is_empty() {
             return 0;
         }
-        
+
         let now = SystemTime::now();
 
-        let time_span = now.duration_since(self.frames.back().unwrap().timestamp).unwrap().as_millis();
+        let time_span = now
+            .duration_since(self.frames.back().unwrap().timestamp)
+            .unwrap()
+            .as_millis();
 
         if time_span > 0 {
             let total_bytes = self.frames.iter().map(|e| e.bytes).sum::<u64>();
 
-            (total_bytes as f64 / time_span as f64 * 1000.0f64)as u64
+            (total_bytes as f64 / time_span as f64 * 1000.0f64) as u64
         } else {
             0
         }
@@ -57,7 +60,10 @@ impl SpeedCalculator {
         }
 
         // 记录一帧
-        self.frames.push_front(Sample { bytes: bytes as u64, timestamp: now });
+        self.frames.push_front(Sample {
+            bytes: bytes as u64,
+            timestamp: now,
+        });
 
         // 清理多余数据
         let mut index = 0;

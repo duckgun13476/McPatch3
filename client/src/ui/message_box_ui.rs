@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::ui::OneshotReceiver;
 
 /// 代表一个消息框的UI，目前主要用来显示更新记录，因为有滚动文本框，所以可以显示很多行的文字
-/// 
+///
 /// 参考链接：https://github.com/gabdube/native-windows-gui/blob/master/native-windows-gui/examples/dialog_multithreading_d.rs
 #[derive(NwgUi)]
 pub struct MessageBoxWindow {
@@ -66,8 +66,8 @@ impl Future for MessageBoxWindowJoinHandle {
     type Output = ();
 
     fn poll(
-        self: std::pin::Pin<&mut Self>, 
-        cx: &mut std::task::Context<'_>
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         // 首先获取锁
         let lock = self.0.lock();
@@ -85,7 +85,7 @@ impl Future for MessageBoxWindowJoinHandle {
 
         // 更新标记
         lock.1 = true;
-        
+
         // 启动唤醒线程
         let this = Arc::clone(&self.0);
         let waker = cx.waker().to_owned();
@@ -96,7 +96,7 @@ impl Future for MessageBoxWindowJoinHandle {
 
             // 等待窗口被关闭的消息发送过来
             receiver.blocking_recv().unwrap();
-            
+
             // 窗口被关闭时，唤醒waker
             waker.wake();
         });

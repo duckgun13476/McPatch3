@@ -1,5 +1,5 @@
-use proc_macro2::Ident;
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use proc_macro2::Span;
 use syn;
 use syn::parse_macro_input;
@@ -18,7 +18,9 @@ pub fn derive_config_template(input: TokenStream) -> TokenStream {
                 let mut default_value = Option::<String>::None;
 
                 for a in f.attrs {
-                    let attr_id = a.path().get_ident()
+                    let attr_id = a
+                        .path()
+                        .get_ident()
                         .map_or_else(|| "".to_owned(), |id| id.to_string());
 
                     if attr_id == "doc" {
@@ -50,14 +52,17 @@ pub fn derive_config_template(input: TokenStream) -> TokenStream {
                         template.push_str(": ");
                         template.push_str(&dv);
                         template.push_str("\n\n");
-                    },
+                    }
                     None => {
-                        let err_msg = format!("#[default_value(...)] is missing on the field '{}'", field_ident);
+                        let err_msg = format!(
+                            "#[default_value(...)] is missing on the field '{}'",
+                            field_ident
+                        );
 
                         return TokenStream::from(quote::quote! {
                             compile_error!(#err_msg);
                         });
-                    },
+                    }
                 }
             }
         }
@@ -66,7 +71,7 @@ pub fn derive_config_template(input: TokenStream) -> TokenStream {
     // for a in input.attrs {
     //     println!("  {}", a.path().get_ident().unwrap().to_string());
     // }
-    
+
     let struct_ident = format!("{}{}", input.ident, "Template");
     let config_template_ident = Ident::new(&struct_ident, Span::call_site());
 

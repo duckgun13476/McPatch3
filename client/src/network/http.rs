@@ -60,14 +60,34 @@ impl HttpProtocol {
             Err(_) => "".to_owned(),
         };
 
-        Self { url: url.to_owned(), client, mask_keyword, index }
+        Self {
+            url: url.to_owned(),
+            client,
+            mask_keyword,
+            index,
+        }
     }
 }
 
 #[async_trait]
 impl UpdatingSource for HttpProtocol {
-    async fn request(&mut self, path: &str, range: &Range<u64>, desc: &str, _config: &GlobalConfig) -> DownloadResult {
-        let full_url = format!("{}{}{}", self.url, if self.url.ends_with("/") { "" } else { "/" }, path);
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        _config: &GlobalConfig,
+    ) -> DownloadResult {
+        let full_url = if path.is_empty() {
+            self.url.to_owned()
+        } else {
+            format!(
+                "{}{}{}",
+                self.url,
+                if self.url.ends_with("/") { "" } else { "/" },
+                path
+            )
+        };
 
         // 检查输入参数，start不能大于end
         let partial_file = range.start > 0 || range.end > 0;
@@ -100,16 +120,30 @@ impl UpdatingSource for HttpProtocol {
 
             body.truncate(300);
 
-            return Ok(Err(BusinessError::new(format!("服务器({})返回了{}而不是206: {} ({})\n{}", self.index, code, path, desc, body))));
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回了{}而不是206: {} ({})\n{}",
+                self.index, code, path, desc, body
+            ))));
         }
 
         let len = match rsp.content_length() {
             Some(len) => len,
-            None => return Ok(Err(BusinessError::new(format!("服务器({})没有返回content-length头: {} ({})", self.index, path, desc)))),
+            None => {
+                return Ok(Err(BusinessError::new(format!(
+                    "服务器({})没有返回content-length头: {} ({})",
+                    self.index, path, desc
+                ))))
+            }
         };
 
         if (range.end - range.start) > 0 && len != range.end - range.start {
-            return Ok(Err(BusinessError::new(format!("服务器({})返回的content-length头 {} 不等于{}: {}", self.index, len, range.end - range.start, path))));
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回的content-length头 {} 不等于{}: {}",
+                self.index,
+                len,
+                range.end - range.start,
+                path
+            ))));
         }
 
         Ok(Ok((len, Box::pin(AsyncStreamBody(rsp, None)))))
@@ -136,11 +170,16 @@ impl AsyncRead for AsyncStreamBody {
             let bytes = {
                 let chunk = self.0.chunk();
                 pin!(chunk);
-        
+
                 match chunk.poll(cx) {
                     std::task::Poll::Ready(Ok(Some(chunk))) => chunk,
                     std::task::Poll::Ready(Ok(None)) => return std::task::Poll::Ready(Ok(())),
-                    std::task::Poll::Ready(Err(err)) => return std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, err))),
+                    std::task::Poll::Ready(Err(err)) => {
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            err,
+                        )))
+                    }
                     std::task::Poll::Pending => return std::task::Poll::Pending,
                 }
             };

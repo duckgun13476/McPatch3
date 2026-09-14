@@ -20,16 +20,16 @@ pub struct GlobalConfig {
     ///   1. webdav://user:pass:127.0.0.1:80   （webdav走http协议）
     ///   2. webdavs://user:pass:127.0.0.1:443 （webdav走https协议）
     ///   注：需要把user和pass这两个地方换成自己的账号密码，127.0.0.1换成主机地址，端口号不能省略
-    /// 
+    ///
     /// 私有协议的例子：（私有协议是mcpatch自己的协议，无需备案，如果做内网穿透请走普通tcp隧道而非http隧道）
     ///   1. mcpatch://127.0.0.1:6700 （私有协议以mcpatch开头，只需要主机和端口号即可，无需输入子目录）
-    /// 
+    ///
     /// Alist网盘协议的例子：（https://github.com/alist-org/alist）
     ///   1. alist://http://127.0.0.1:6700 （alist://后加Alist的对应文件夹的网址，走http协议）
     ///   2. alist://https://127.0.0.1:6700/subfolder （走https协议）
     ///   注：直接把Alist网盘的网址复制到这里即可，开启签名也可以正常使用
     ///     如 alist://https://al.nn.ci/special_filename
-    /// 
+    ///
     #[default_value("\n  - mcpatch://127.0.0.1:6700 # 若在公网部署记得换成自己的公网ip或者域名")]
     pub urls: Vec<String>,
 
@@ -112,7 +112,7 @@ pub struct GlobalConfig {
     /// 示例：Plain Craft Launcher 2.exe
     #[default_value("''")]
     pub run_after_update: String,
-  
+
     /// 是否显示控制台（黑窗口）
     /// 如果为false，程序启动时不会显示控制台窗口
     /// 如果为true，会显示控制台窗口，方便调试
@@ -126,18 +126,20 @@ impl GlobalConfig {
 
         // 生成默认的配置文件
         if !file.exists() {
-            tokio::fs::write(&file, GlobalConfigTemplate).await
+            tokio::fs::write(&file, GlobalConfigTemplate)
+                .await
                 .be(|e| format!("生成默认配置文件失败({:?})，原因：{}", file, e))?;
         }
 
         // 读取配置文件
-        let content = tokio::fs::read_to_string(file).await
+        let content = tokio::fs::read_to_string(file)
+            .await
             .be(|e| format!("读取配置文件失败({:?})，原因：{}", file, e))?;
         let first = yaml_rust::YamlLoader::load_from_str(&content)
             .be(|e| format!("配置文件解析失败({:?})，原因：{}", file, e))?
             .remove(0);
 
-        for (k ,v) in first.into_hash().unwrap() {
+        for (k, v) in first.into_hash().unwrap() {
             config.insert(k, v);
         }
 
@@ -145,8 +147,8 @@ impl GlobalConfig {
         let default = yaml_rust::YamlLoader::load_from_str(GlobalConfigTemplate)
             .be(|e| format!("配置文件模板解析失败，原因：{}", e))?
             .remove(0);
-        
-        for (k ,v) in default.into_hash().be(|| "配置文件模板格式不正确")? {
+
+        for (k, v) in default.into_hash().be(|| "配置文件模板格式不正确")? {
             if !config.contains_key(&k) {
                 config.insert(k, v);
             }
@@ -154,10 +156,17 @@ impl GlobalConfig {
 
         let config = yaml_rust::Yaml::Hash(config);
 
-        let mut urls = config["urls"].as_vec().be(|| "配置文件中找不到 urls")?.iter()
-                .map(|e| e.as_str().expect("配置文件 urls 中只能包含纯字符串元素").to_owned())
-                .collect::<Vec<String>>();
-        
+        let mut urls = config["urls"]
+            .as_vec()
+            .be(|| "配置文件中找不到 urls")?
+            .iter()
+            .map(|e| {
+                e.as_str()
+                    .expect("配置文件 urls 中只能包含纯字符串元素")
+                    .to_owned()
+            })
+            .collect::<Vec<String>>();
+
         // 尝试解码base64编码后的服务器地址
         for line in urls.iter_mut() {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(line.as_bytes()) {
@@ -166,30 +175,76 @@ impl GlobalConfig {
             }
         }
 
-        let version_file_path = config["version-file-path"].as_str().be(|| "配置文件中找不到 version-file-path")?.to_owned();
-        let allow_error = config["allow-error"].as_bool().be(|| "配置文件中找不到 allow-error")?.to_owned();
-        let show_finish_message = config["show-finish-message"].as_bool().be(|| "配置文件中找不到 show-finish-message")?.to_owned();
-        let show_changelogs_message = config["show-changelogs-message"].as_bool().be(|| "配置文件中找不到 show-changelogs-message")?.to_owned();
-        let silent_mode = config["silent-mode"].as_bool().be(|| "配置文件中找不到 silent-mode")?.to_owned();
-        let window_title = config["window-title"].as_str().be(|| "配置文件中找不到 window-title")?.to_owned();
-        let changelogs_window_title = config["changelogs-window-title"].as_str().be(|| "配置文件中找不到 changelogs-window-title")?.to_owned();
-        let base_path = config["base-path"].as_str().be(|| "配置文件中找不到 base-path")?.to_owned();
-        let private_timeout = config["private-timeout"].as_i64().be(|| "配置文件中找不到 private-timeout")? as u32;
+        let version_file_path = config["version-file-path"]
+            .as_str()
+            .be(|| "配置文件中找不到 version-file-path")?
+            .to_owned();
+        let allow_error = config["allow-error"]
+            .as_bool()
+            .be(|| "配置文件中找不到 allow-error")?
+            .to_owned();
+        let show_finish_message = config["show-finish-message"]
+            .as_bool()
+            .be(|| "配置文件中找不到 show-finish-message")?
+            .to_owned();
+        let show_changelogs_message = config["show-changelogs-message"]
+            .as_bool()
+            .be(|| "配置文件中找不到 show-changelogs-message")?
+            .to_owned();
+        let silent_mode = config["silent-mode"]
+            .as_bool()
+            .be(|| "配置文件中找不到 silent-mode")?
+            .to_owned();
+        let window_title = config["window-title"]
+            .as_str()
+            .be(|| "配置文件中找不到 window-title")?
+            .to_owned();
+        let changelogs_window_title = config["changelogs-window-title"]
+            .as_str()
+            .be(|| "配置文件中找不到 changelogs-window-title")?
+            .to_owned();
+        let base_path = config["base-path"]
+            .as_str()
+            .be(|| "配置文件中找不到 base-path")?
+            .to_owned();
+        let private_timeout = config["private-timeout"]
+            .as_i64()
+            .be(|| "配置文件中找不到 private-timeout")? as u32;
         let http_headers = match config["http-headers"].as_hash() {
-            Some(map) => map.iter()
+            Some(map) => map
+                .iter()
                 .map(|e| {
-                    let k = e.0.as_str().expect("http协议头中列表元素的 key 只能是字符串").to_owned();
-                    let v = e.1.as_str().expect("http协议头中列表元素的 value 只能是字符串").to_owned();
+                    let k =
+                        e.0.as_str()
+                            .expect("http协议头中列表元素的 key 只能是字符串")
+                            .to_owned();
+                    let v =
+                        e.1.as_str()
+                            .expect("http协议头中列表元素的 value 只能是字符串")
+                            .to_owned();
                     (k, v)
                 })
                 .collect(),
             None => Vec::new(),
         };
-        let http_timeout = config["http-timeout"].as_i64().be(|| "配置文件中找不到 http-timeout")? as u32;
-        let http_retries = config["http-retries"].as_i64().be(|| "配置文件中找不到 http-retries")? as u8;
-        let http_ignore_certificate = config["http-ignore-certificate"].as_bool().be(|| "配置文件中找不到 http-ignore-certificate")?.to_owned();
-        let run_after_update = config["run-after-update"].as_str().be(|| "配置文件中找不到 run-after-update")?.to_owned();
-        let show_console = config["show-console"].as_bool().be(|| "配置文件中找不到 show-console")?.to_owned();
+        let http_timeout = config["http-timeout"]
+            .as_i64()
+            .be(|| "配置文件中找不到 http-timeout")? as u32;
+        let http_retries = config["http-retries"]
+            .as_i64()
+            .be(|| "配置文件中找不到 http-retries")? as u8;
+        let http_ignore_certificate = config["http-ignore-certificate"]
+            .as_bool()
+            .be(|| "配置文件中找不到 http-ignore-certificate")?
+            .to_owned();
+        let run_after_update = config["run-after-update"]
+            .as_str()
+            .be(|| "配置文件中找不到 run-after-update")?
+            .to_owned();
+        let show_console = config["show-console"]
+            .as_bool()
+            .be(|| "配置文件中找不到 show-console")?
+            .to_owned();
 
         Ok(GlobalConfig {
             urls,

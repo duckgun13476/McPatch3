@@ -56,13 +56,15 @@ impl<R: AsyncRead + Unpin> AsyncRead for PartialAsyncRead<R> {
             std::task::Poll::Ready(ready) => {
                 let adv = partial.filled().len();
 
-                unsafe { buf.assume_init(adv); }
+                unsafe {
+                    buf.assume_init(adv);
+                }
                 buf.advance(adv);
 
                 self.1 -= adv as u64;
 
                 std::task::Poll::Ready(ready)
-            },
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -76,12 +78,15 @@ mod tests {
 
     #[test]
     fn partial_async_read_test() {
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
         runtime.block_on(async {
             const TOTAL: usize = 884;
             const BUF: usize = 1000;
-            
+
             let mut data = Vec::<u8>::new();
 
             for i in 0..TOTAL {
@@ -92,7 +97,7 @@ mod tests {
             expectation.reverse();
 
             let mut data = &data[..];
-    
+
             let count = data.len();
             let mut partial = PartialAsyncRead::new(&mut data, count as u64);
 

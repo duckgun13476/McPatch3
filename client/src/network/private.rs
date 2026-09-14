@@ -17,26 +17,26 @@ use crate::network::DownloadResult;
 use crate::network::UpdatingSource;
 
 /// 代表mcpatch私有更新协议
-/// 
+///
 /// ## 数据帧格式
-/// 
+///
 /// 私有协议的通信格式为一个个数据帧。
-/// 
+///
 /// 每个数据帧由两部分组成：\[`长度部分`]和\[`数据部分`]
-/// 
+///
 /// \[`长度部分`\]用来描述后面的数据部分的长度，\[`长度部分`\]本身是固定4字节大小的，小端顺序，无符号
-/// 
+///
 /// 紧接着的\[`数据部分`\]是变长的，具体有多长需要读取前面的\[`长度部分`\]就能知道
-/// 
+///
 /// 比如发送一个2字节short类型的数据128(0x80)，按小端模式翻译成字节就是：`0x80, 0x0`
-/// 
+///
 /// 因为长度为2个字节，所以\[`长度部分`\]就是`[0x2, 0x0, 0x0, 0x0]`（\[`长度部分`\]大小固定为4个字节不变）
-/// 
+///
 /// 接着\[`数据部分`\]是`0x80, 0x0`，合起来就是`[0x2, 0x0, 0x0, 0x0], [0x80, 0x0]`一共6个字节，组成这一帧的数据
-/// 
+///
 /// ## 通信流程
-/// 
-/// ```
+///
+/// ```text
 ///       客户端                    服务端
 /// -------------------------------------------
 /// 1.发出文件路径字符串
@@ -61,7 +61,7 @@ pub struct PrivateProtocol {
 
 impl PrivateProtocol {
     pub fn new(addr: &str, _config: &GlobalConfig, index: u32) -> Self {
-        Self { 
+        Self {
             addr: addr.to_owned(),
             tcp_stream: Arc::new(Mutex::new(None)),
             mask_keyword: addr.to_owned(),
@@ -72,15 +72,25 @@ impl PrivateProtocol {
 
 #[async_trait]
 impl UpdatingSource for PrivateProtocol {
-    async fn request(&mut self, path: &str, range: &Range<u64>, desc: &str, config: &GlobalConfig) -> DownloadResult {
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        config: &GlobalConfig,
+    ) -> DownloadResult {
         let mut stream_lock = self.tcp_stream.clone().lock_owned().await;
 
         // 懒惰加载
         if stream_lock.is_none() {
             let tcp = TcpStream::connect(&self.addr).await?;
             let std_tcp = tcp.into_std().unwrap();
-            std_tcp.set_read_timeout(Some(Duration::from_millis(config.private_timeout as u64))).unwrap();
-            std_tcp.set_write_timeout(Some(Duration::from_millis(config.private_timeout as u64))).unwrap();
+            std_tcp
+                .set_read_timeout(Some(Duration::from_millis(config.private_timeout as u64)))
+                .unwrap();
+            std_tcp
+                .set_write_timeout(Some(Duration::from_millis(config.private_timeout as u64)))
+                .unwrap();
 
             *stream_lock = Some(tokio::net::TcpStream::from_std(std_tcp).unwrap());
         }
@@ -90,7 +100,7 @@ impl UpdatingSource for PrivateProtocol {
 
         // 首先发送文件路径
         send_data(stream, path.as_bytes()).await?;
-        
+
         // 然后发送下载范围
         stream.write_all(&range.start.to_le_bytes()).await?;
         stream.write_all(&range.end.to_le_bytes()).await?;
@@ -99,7 +109,10 @@ impl UpdatingSource for PrivateProtocol {
         let len = stream.read_i64_le().await?;
 
         if len < 0 {
-            return Ok(Err(BusinessError::new(format!("私有协议({})接收到的状态码 {} 不正确: {} ({})", index, len, path, desc))));
+            return Ok(Err(BusinessError::new(format!(
+                "私有协议({})接收到的状态码 {} 不正确: {} ({})",
+                index, len, path, desc
+            ))));
         }
 
         // 状态码没问题就正常接收文件数据
@@ -124,13 +137,18 @@ async fn send_data(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn _receive_data<'a>(mut stream: OwnedMutexGuard<Option<TcpStream>>) -> std::io::Result<PrivatePartialAsyncRead> {
+async fn _receive_data<'a>(
+    mut stream: OwnedMutexGuard<Option<TcpStream>>,
+) -> std::io::Result<PrivatePartialAsyncRead> {
     let len = stream.as_mut().unwrap().read_u64_le().await?;
 
     Ok(PrivatePartialAsyncRead::new(stream, len))
 }
 
-async fn receive_partial_data<'a>(stream: OwnedMutexGuard<Option<TcpStream>>, count: u64) -> std::io::Result<PrivatePartialAsyncRead> {
+async fn receive_partial_data<'a>(
+    stream: OwnedMutexGuard<Option<TcpStream>>,
+    count: u64,
+) -> std::io::Result<PrivatePartialAsyncRead> {
     Ok(PrivatePartialAsyncRead::new(stream, count))
 }
 
@@ -167,13 +185,15 @@ impl AsyncRead for PrivatePartialAsyncRead {
             std::task::Poll::Ready(ready) => {
                 let adv = partial.filled().len();
 
-                unsafe { buf.assume_init(adv); }
+                unsafe {
+                    buf.assume_init(adv);
+                }
                 buf.advance(adv);
 
                 self.1 -= adv as u64;
 
                 std::task::Poll::Ready(ready)
-            },
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }

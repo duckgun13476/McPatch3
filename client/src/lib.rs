@@ -1,15 +1,16 @@
-pub mod global_config;
 pub mod error;
+pub mod global_config;
 pub mod log;
-pub mod work;
 pub mod network;
 pub mod speed_sampler;
+pub mod ui_profile;
+pub mod work;
 
+pub mod common;
+pub mod data;
 #[cfg(target_os = "windows")]
 pub mod ui;
 pub mod utility;
-pub mod data;
-pub mod common;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ pub struct AppContext {
     pub workspace_dir: PathBuf,
     pub public_dir: PathBuf,
     pub index_file: PathBuf,
-    pub config: GlobalConfig
+    pub config: GlobalConfig,
 }
 
 pub struct StartupParameter {
@@ -39,9 +40,6 @@ pub struct McpatchExitCode(pub i8);
 
 pub fn program() -> McpatchExitCode {
     std::env::set_var("RUST_BACKTRACE", "1");
-
-    #[cfg(target_os = "windows")]
-    hide_console_initial();
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -57,7 +55,7 @@ pub fn program() -> McpatchExitCode {
 
     #[cfg(target_os = "windows")]
     let window_close_signal = tokio::sync::oneshot::channel::<()>();
-    
+
     #[cfg(target_os = "windows")]
     let (ui_cmd, _ui) = crate::ui::main_ui::MainWindow::new();
     let panic_info_captured = Arc::new(Mutex::new(Option::<String>::None));
@@ -67,7 +65,10 @@ pub fn program() -> McpatchExitCode {
     let old_handler = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |_info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let text = format!("program paniked!!!\n{:#?}\nBacktrace: \n{}", _info, backtrace);
+        let text = format!(
+            "program paniked!!!\n{:#?}\nBacktrace: \n{}",
+            _info, backtrace
+        );
 
         log_error(format!("-----------\n{}-----------", text));
         *panic_info_captured2.lock().unwrap() = Some(text);
@@ -85,7 +86,7 @@ pub fn program() -> McpatchExitCode {
         standalone_progress: true,
         disable_log_file: false,
     };
-    
+
     // 带ui的逻辑
     #[cfg(target_os = "windows")]
     {
@@ -97,29 +98,29 @@ pub fn program() -> McpatchExitCode {
                 code = run(params, &mut ui_cmd2) => code
             }
         });
-    
+
         // 守护逻辑，用于关闭ui
         let guard = runtime.spawn(async move {
             let result = work.await;
-    
+
             // work结束运行后，无论是正常结束，还是panic导致的结束，都要关闭ui
             ui_cmd.exit().await;
-    
+
             match result {
                 Ok(code) => code,
                 Err(_) => McpatchExitCode(1),
             }
         });
-        
+
         // 开始ui事件循环
         #[cfg(target_os = "windows")]
         nwg::dispatch_thread_events();
-    
+
         // 发送成功代表用户手动关闭了窗口
         if let Ok(_) = window_close_signal.0.send(()) {
             println!("interupted by user");
         }
-        
+
         // guard不允许出现panic
         return runtime.block_on(guard).unwrap();
     }
@@ -132,29 +133,18 @@ pub fn program() -> McpatchExitCode {
     }
 }
 
-/// 在程序启动时立即隐藏控制台窗口
-/// 后续会根据配置决定是否重新显示
-#[cfg(target_os = "windows")]
-fn hide_console_initial() {
-    use winapi::um::wincon::GetConsoleWindow;
-    use winapi::um::winuser::{ShowWindow, SW_HIDE};
-
-    unsafe {
-        let hwnd = GetConsoleWindow();
-        if !hwnd.is_null() {
-            ShowWindow(hwnd, SW_HIDE);
-        }
-    }
-}
-
 /// 根据配置显示或隐藏控制台窗口
 #[cfg(target_os = "windows")]
 pub fn apply_console_visibility(show: bool) {
+    use winapi::um::consoleapi::AllocConsole;
     use winapi::um::wincon::GetConsoleWindow;
     use winapi::um::winuser::{ShowWindow, SW_HIDE, SW_SHOW};
 
     unsafe {
-        let hwnd = GetConsoleWindow();
+        let mut hwnd = GetConsoleWindow();
+        if show && hwnd.is_null() && AllocConsole() != 0 {
+            hwnd = GetConsoleWindow();
+        }
         if !hwnd.is_null() {
             ShowWindow(hwnd, if show { SW_SHOW } else { SW_HIDE });
         }
@@ -168,14 +158,14 @@ fn popup_error_dialog(info: &std::panic::PanicHookInfo, backtrace: std::backtrac
         title: "Fatal error occurred",
         content: "程序出现错误，即将结束运行。点击确定直接退出，点击取消打印错误信息",
         buttons: nwg::MessageButtons::OkCancel,
-        icons: nwg::MessageIcons::Error
+        icons: nwg::MessageIcons::Error,
     };
 
     match nwg::message(&mp) {
-        nwg::MessageChoice::Ok => {},
+        nwg::MessageChoice::Ok => {}
         nwg::MessageChoice::Cancel => {
             nwg::error_message("Error detail", &format!("{:?}\n{}", info, backtrace));
-        },
+        }
         _ => (),
     }
 }

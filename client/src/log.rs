@@ -10,7 +10,7 @@ static LOG_HANDLERS: RwLock<Vec<Box<dyn MessageHandler + Send>>> = RwLock::new(V
 
 static LOG_PREFIX: RwLock<String> = RwLock::new(String::new());
 
-pub trait MessageHandler : Sync {
+pub trait MessageHandler: Sync {
     fn record(&self, message: &Message);
 }
 
@@ -21,7 +21,7 @@ pub enum MessageLevel {
     Info,
     Warning,
     Error,
-    None
+    None,
 }
 
 pub struct Message<'a> {
@@ -73,7 +73,7 @@ fn log_message(content: impl AsRef<str>, level: MessageLevel, new_line: bool) {
 }
 
 pub struct ConsoleHandler {
-    filter: MessageLevel
+    filter: MessageLevel,
 }
 
 impl ConsoleHandler {
@@ -123,11 +123,14 @@ pub struct FileHandler {
 impl FileHandler {
     pub fn new(log_file: &PathBuf) -> Self {
         Self {
-            file: Mutex::new(std::fs::File::options()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(log_file).unwrap())
+            file: Mutex::new(
+                std::fs::File::options()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(log_file)
+                    .unwrap(),
+            ),
         }
     }
 }

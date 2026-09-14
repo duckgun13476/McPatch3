@@ -5,15 +5,15 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::Url;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::Client;
 use reqwest::ClientBuilder;
 use reqwest::Response;
+use reqwest::Url;
+use serde_json::json;
 use tokio::io::AsyncRead;
 use tokio::pin;
-use serde_json::json;
 
 use crate::error::BusinessError;
 use crate::global_config::GlobalConfig;
@@ -75,13 +75,25 @@ impl AlistProtocol {
             Err(_) => "".to_owned(),
         };
 
-        Self { url: url.to_owned(), client, mask_keyword, index, cache: Mutex::new(HashMap::new()) }
+        Self {
+            url: url.to_owned(),
+            client,
+            mask_keyword,
+            index,
+            cache: Mutex::new(HashMap::new()),
+        }
     }
 }
 
 #[async_trait]
 impl UpdatingSource for AlistProtocol {
-    async fn request(&mut self, path: &str, range: &Range<u64>, desc: &str, _config: &GlobalConfig) -> DownloadResult {
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        _config: &GlobalConfig,
+    ) -> DownloadResult {
         let cached_url = {
             let cache = self.cache.lock().unwrap();
             cache.get(path).cloned()
@@ -94,22 +106,40 @@ impl UpdatingSource for AlistProtocol {
             // 获取实际的文件URL
             let base_url: Url = match Url::parse(&self.url) {
                 Ok(url) => url,
-                Err(_) => return Ok(Err(BusinessError::new(format!("无效的基础URL: {}", self.url)))),
+                Err(_) => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "无效的基础URL: {}",
+                        self.url
+                    ))))
+                }
             };
 
             // 解析基础URL失败
             let host_url = match base_url.join("/") {
                 Ok(url) => url,
-                Err(_) => return Ok(Err(BusinessError::new(format!("解析基础URL失败: {}", self.url)))),
+                Err(_) => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "解析基础URL失败: {}",
+                        self.url
+                    ))))
+                }
             };
 
             // 拼接 "/api/fs/get" 和 path
             let full_url = match base_url.join("/api/fs/get") {
                 Ok(url) => url,
-                Err(_) => return Ok(Err(BusinessError::new(format!("拼接路径失败: {} 和 /api/fs/get", self.url)))),
+                Err(_) => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "拼接路径失败: {} 和 /api/fs/get",
+                        self.url
+                    ))))
+                }
             };
 
-            let real_path = format!("/{}", (base_url.as_str().replace(host_url.as_str(), "") + path));
+            let real_path = format!(
+                "/{}",
+                (base_url.as_str().replace(host_url.as_str(), "") + path)
+            );
 
             // 请求负载
             let payload = json!({
@@ -122,13 +152,8 @@ impl UpdatingSource for AlistProtocol {
             // log_debug(format!("alist full_url {}", full_url));
             // log_debug(format!("alist real_path {}", real_path));
 
-
             // 发起POST请求
-            let rsp = match self.client.post(full_url)
-                .json(&payload)
-                .send()
-                .await
-            {
+            let rsp = match self.client.post(full_url).json(&payload).send().await {
                 Ok(rsp) => rsp,
                 Err(err) => return Err(std::io::Error::new(std::io::ErrorKind::Other, err)),
             };
@@ -136,7 +161,12 @@ impl UpdatingSource for AlistProtocol {
             // 输出服务器返回的原始响应内容
             let response_text = match rsp.text().await {
                 Ok(text) => text,
-                Err(_) => return Ok(Err(BusinessError::new(format!("服务器({})返回的内容无法读取: {} ({})", self.index, path, desc)))),
+                Err(_) => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "服务器({})返回的内容无法读取: {} ({})",
+                        self.index, path, desc
+                    ))))
+                }
             };
 
             // log_debug(format!("服务器({})返回的原始内容: {}", self.index, response_text));
@@ -144,11 +174,18 @@ impl UpdatingSource for AlistProtocol {
             // 解析JSON响应
             let json: serde_json::Value = match serde_json::from_str(&response_text) {
                 Ok(json) => json,
-                Err(_) => return Ok(Err(BusinessError::new(format!("服务器({})返回的数据格式不正确: {} ({})", self.index, path, desc)))),
+                Err(_) => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "服务器({})返回的数据格式不正确: {} ({})",
+                        self.index, path, desc
+                    ))))
+                }
             };
 
             // 提取实际URL
-            let raw_url = json.pointer("/data/raw_url").and_then(serde_json::Value::as_str);
+            let raw_url = json
+                .pointer("/data/raw_url")
+                .and_then(serde_json::Value::as_str);
 
             if let Some(raw_url) = raw_url {
                 {
@@ -157,9 +194,11 @@ impl UpdatingSource for AlistProtocol {
                 }
                 return self.fetch_file_with_url(&raw_url, range, path, desc).await;
             } else {
-                return Ok(Err(BusinessError::new(format!("服务器({})返回的数据中没有raw_url字段: {} ({})", self.index, path, desc))));
+                return Ok(Err(BusinessError::new(format!(
+                    "服务器({})返回的数据中没有raw_url字段: {} ({})",
+                    self.index, path, desc
+                ))));
             }
-
         }
     }
 
@@ -179,7 +218,8 @@ impl AlistProtocol {
         // log_debug(format!("服务器({})返回的实际URL: {}", self.index, url));
 
         // 检查输入参数，start不能大于end
-        let partial_file = !(range.start == 0 && range.end == 0) && (range.start > 0 || range.end > 0);
+        let partial_file =
+            !(range.start == 0 && range.end == 0) && (range.start > 0 || range.end > 0);
 
         if partial_file {
             assert!(range.end >= range.start);
@@ -209,22 +249,39 @@ impl AlistProtocol {
             // log_debug(format!("------------\n{}\n------------", body));
             body.truncate(300);
 
-            return Ok(Err(BusinessError::new(format!("服务器({})返回了{}而不是206: {} ({})", self.index, code, path, desc))));
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回了{}而不是206: {} ({})",
+                self.index, code, path, desc
+            ))));
         }
 
         // 如果是分段请求，检查content-length
         if partial_file {
             let len = match rsp.content_length() {
                 Some(len) => len,
-                None => return Ok(Err(BusinessError::new(format!("服务器({})没有返回content-length头: {} ({})", self.index, path, desc)))),
+                None => {
+                    return Ok(Err(BusinessError::new(format!(
+                        "服务器({})没有返回content-length头: {} ({})",
+                        self.index, path, desc
+                    ))))
+                }
             };
 
             if (range.end - range.start) > 0 && len != range.end - range.start {
-                return Ok(Err(BusinessError::new(format!("服务器({})返回的content-length头 {} 不等于{}: {}", self.index, len, range.end - range.start, path))));
+                return Ok(Err(BusinessError::new(format!(
+                    "服务器({})返回的content-length头 {} 不等于{}: {}",
+                    self.index,
+                    len,
+                    range.end - range.start,
+                    path
+                ))));
             }
         }
 
-        Ok(Ok((rsp.content_length().unwrap_or(0), Box::pin(AsyncStreamBody(rsp, None)))))
+        Ok(Ok((
+            rsp.content_length().unwrap_or(0),
+            Box::pin(AsyncStreamBody(rsp, None)),
+        )))
     }
 }
 
@@ -244,11 +301,16 @@ impl AsyncRead for AsyncStreamBody {
             let bytes = {
                 let chunk = self.0.chunk();
                 pin!(chunk);
-        
+
                 match chunk.poll(cx) {
                     std::task::Poll::Ready(Ok(Some(chunk))) => chunk,
                     std::task::Poll::Ready(Ok(None)) => return std::task::Poll::Ready(Ok(())),
-                    std::task::Poll::Ready(Err(err)) => return std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, err))),
+                    std::task::Poll::Ready(Err(err)) => {
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            err,
+                        )))
+                    }
                     std::task::Poll::Pending => return std::task::Poll::Pending,
                 }
             };
