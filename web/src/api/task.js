@@ -13,14 +13,14 @@ export const taskAddDeleteFileRequest = (path) => instance.post('/task/change/de
 
 export const taskRemoveDeleteFileRequest = (path) => instance.post('/task/change/remove-delete-file', {path})
 
-export const taskAddHashDeletionRequest = (file, onProgress) => axios.post(
+export const taskAddHashDeletionRequest = (file, path, onProgress) => axios.post(
   `${import.meta.env.VITE_API_URL}/task/change/delete-file-by-hash`,
   file,
   {
     headers: {
       'Token': store.getState().user.token,
       'Content-Type': 'application/octet-stream',
-      'File-Name': encodeURIComponent(file.name)
+      'File-Path': encodeURIComponent(path)
     },
     onUploadProgress: (event) => {
       if (event.total) onProgress?.({percent: Math.floor((event.loaded / event.total) * 100)})
@@ -28,9 +28,14 @@ export const taskAddHashDeletionRequest = (file, onProgress) => axios.post(
   }
 ).then(response => response.data)
 
-export const taskRemoveHashDeletionRequest = (sha256) => instance.post(
+export const taskConvertAddToHashDeletionRequest = (path) => instance.post(
+  '/task/change/convert-add-to-hash-delete',
+  {path}
+)
+
+export const taskRemoveHashDeletionRequest = (path) => instance.post(
   '/task/change/remove-delete-file-by-hash',
-  {sha256}
+  {path}
 )
 
 export const taskCombineRequest = () => instance.post('/task/combine', {})

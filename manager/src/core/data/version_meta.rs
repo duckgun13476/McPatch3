@@ -59,14 +59,13 @@ pub struct ExternalSource {
     pub fallback_to_mcpatch: bool,
 }
 
-/// Deletes matching obsolete client files without requiring their old path.
+/// Deletes an obsolete client file only when its path and content both match.
 /// This lives outside `changes` so clients predating the feature safely ignore it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientHashDeletion {
+    pub path: String,
     pub sha256: String,
     pub len: u64,
-    pub name_hint: String,
-    pub search_root: String,
 }
 
 /// 代表单个文件操作
@@ -185,14 +184,9 @@ impl VersionMeta {
             let mut deletions = JsonValue::new_array();
             for deletion in &self.client_hash_deletions {
                 let mut entry = JsonValue::new_object();
+                entry.insert("path", deletion.path.clone()).unwrap();
                 entry.insert("sha256", deletion.sha256.clone()).unwrap();
                 entry.insert("len", deletion.len).unwrap();
-                entry
-                    .insert("name-hint", deletion.name_hint.clone())
-                    .unwrap();
-                entry
-                    .insert("search-root", deletion.search_root.clone())
-                    .unwrap();
                 deletions.push(entry).unwrap();
             }
             obj.insert("delete-by-hash", deletions).unwrap();
@@ -202,10 +196,9 @@ impl VersionMeta {
 
     fn parse_hash_deletion(v: &JsonValue) -> Option<ClientHashDeletion> {
         Some(ClientHashDeletion {
+            path: v["path"].as_str()?.to_owned(),
             sha256: v["sha256"].as_str()?.to_owned(),
             len: v["len"].as_u64()?,
-            name_hint: v["name-hint"].as_str()?.to_owned(),
-            search_root: v["search-root"].as_str()?.to_owned(),
         })
     }
 
@@ -317,10 +310,9 @@ mod tests {
             "test".to_owned(),
             LinkedList::new(),
             vec![ClientHashDeletion {
+                path: ".minecraft/mods/old.jar".to_owned(),
                 sha256: "a".repeat(64),
                 len: 42,
-                name_hint: "old.jar".to_owned(),
-                search_root: ".minecraft/mods".to_owned(),
             }],
         );
         let serialized = meta.serialize();

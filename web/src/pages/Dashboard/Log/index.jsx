@@ -1,8 +1,8 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Button, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip, Upload} from "antd";
+import {Button, Dropdown, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip, Upload} from "antd";
 import {
   taskAddDeleteFileRequest,
-  taskAddHashDeletionRequest, taskCombineRequest, taskPackRequest,
+  taskAddHashDeletionRequest, taskCombineRequest, taskConvertAddToHashDeletionRequest, taskPackRequest,
   taskRemoveDeleteFileRequest, taskRemoveHashDeletionRequest,
   taskRevertRequest,
   taskTestRequest,
@@ -74,6 +74,7 @@ const Index = () => {
   const [packPreview, setPackPreview] = useState(null)
   const [excludedChangeIds, setExcludedChangeIds] = useState([])
   const [deletePath, setDeletePath] = useState('')
+  const [hashDeletePath, setHashDeletePath] = useState('')
   const [packLoading, setPackLoading] = useState(false)
   const [hashDeleteLoading, setHashDeleteLoading] = useState(false)
   const logsRef = useRef(null);
@@ -197,7 +198,7 @@ const Index = () => {
 
   const removeChange = async (change) => {
     if (change.explicit && change.operation === 'delete-file-by-hash') {
-      const {code, msg} = await taskRemoveHashDeletionRequest(change.hash)
+      const {code, msg} = await taskRemoveHashDeletionRequest(change.path)
       if (code !== 1) {
         messageApi.error(msg)
         return
@@ -226,6 +227,7 @@ const Index = () => {
     setPackPreview(null)
     setExcludedChangeIds([])
     setDeletePath('')
+    setHashDeletePath('')
   }
 
   const operationLabel = (operation) => ({
@@ -250,15 +252,54 @@ const Index = () => {
 
   const visiblePackChanges = packPreview?.changes.filter(change => !excludedChangeIds.includes(change.id)) || []
 
+  const refreshPackPreview = async () => {
+    const tempUpdateRecord = updateRecord === '' ? '这个人很懒, 没有写更新记录.' : updateRecord
+    await loadPackPreview(version, tempUpdateRecord)
+  }
+
+  const changeContextItems = (change) => {
+    if (change.operation === 'add-file' && !change.explicit) {
+      return [{key: 'hash-delete', label: '改为客户端哈希删除'}]
+    }
+    if (change.operation === 'delete-file-by-hash' && change.explicit) {
+      return [{key: 'restore-add', label: '撤销哈希删除并恢复新增'}]
+    }
+    return []
+  }
+
+  const handleChangeContextAction = async (change, key) => {
+    if (key === 'hash-delete') {
+      const {code, msg} = await taskConvertAddToHashDeletionRequest(change.path)
+      if (code !== 1) {
+        messageApi.error(msg)
+        return
+      }
+      messageApi.success('已改为精确路径哈希删除。')
+      await refreshPackPreview()
+    } else if (key === 'restore-add') {
+      const {code, msg} = await taskRemoveHashDeletionRequest(change.path)
+      if (code !== 1) {
+        messageApi.error(msg)
+        return
+      }
+      messageApi.success('已撤销哈希删除并恢复新增文件。')
+      await refreshPackPreview()
+    }
+  }
+
   const hashDeleteUploadProps = {
     showUploadList: false,
     multiple: false,
     maxCount: 1,
-    accept: '.jar',
     customRequest: async ({file, onSuccess, onError, onProgress}) => {
+      if (hashDeletePath.trim() === '') {
+        messageApi.warning('请先填写玩家客户端中的精确相对路径。')
+        onError(new Error('missing target path'))
+        return
+      }
       setHashDeleteLoading(true)
       try {
-        const response = await taskAddHashDeletionRequest(file, onProgress)
+        const response = await taskAddHashDeletionRequest(file, hashDeletePath.trim(), onProgress)
         if (response.code !== 1) {
           messageApi.error(response.msg)
           onError(new Error(response.msg))
@@ -266,7 +307,8 @@ const Index = () => {
         }
         setPackPreview(null)
         setExcludedChangeIds([])
-        messageApi.success(`已登记客户端删除：${file.name}`)
+        setHashDeletePath('')
+        messageApi.success(`已登记精确路径哈希删除：${file.name}`)
         onSuccess(response)
       } catch (error) {
         messageApi.error('客户端删除指纹上传失败。')
@@ -429,18 +471,19 @@ const Index = () => {
                 <Button icon={<Plus size={18}/>} onClick={addDeleteChange}/>
               </Tooltip>
             </div>
-            <div className="mt-5 text-sm font-medium text-gray-700">删除仅存在于玩家客户端的旧模组</div>
+            <div className="mt-5 text-sm font-medium text-gray-700">按精确路径和文件哈希删除客户端文件</div>
             <div className="mt-2 text-xs text-gray-400">
-              上传旧 jar 只用于计算 SHA-256，不会保存文件；客户端仅删除内容完全一致的模组。
+              填写玩家客户端中的相对路径并上传原文件作为指纹。服务端不保存上传内容，客户端仅在路径、大小和 SHA-256 全部一致时删除。
             </div>
-            <Upload {...hashDeleteUploadProps}>
-              <Button
-                className="mt-2"
-                icon={<FileMinus2 size={18}/>}
-                loading={hashDeleteLoading}>
-                客户端删除
-              </Button>
-            </Upload>
+            <div className="mt-2 flex gap-2">
+              <Input
+                placeholder="例如 .minecraft/mods/obsolete.jar"
+                value={hashDeletePath}
+                onChange={(e) => setHashDeletePath(e.target.value)}/>
+              <Upload {...hashDeleteUploadProps}>
+                <Button icon={<FileMinus2 size={18}/>} loading={hashDeleteLoading}>选择原文件</Button>
+              </Upload>
+            </div>
           </div>
         ) : (
           <div>
@@ -451,8 +494,10 @@ const Index = () => {
               )}
             </div>
             <div className="max-h-[430px] overflow-y-auto pr-1">
-              {visiblePackChanges.map(change => (
-                <div key={change.id} className="relative mb-2 rounded-md border border-gray-200 px-3 py-3 pr-12">
+              {visiblePackChanges.map(change => {
+                const contextItems = changeContextItems(change)
+                const card = (
+                <div className="relative mb-2 rounded-md border border-gray-200 px-3 py-3 pr-12">
                   <div className="flex items-center gap-2">
                     <Tag color={operationColor(change.operation)}>{operationLabel(change.operation)}</Tag>
                     {change.explicit && <Tag>显式指令</Tag>}
@@ -475,7 +520,16 @@ const Index = () => {
                       onClick={() => removeChange(change)}/>
                   </Tooltip>
                 </div>
-              ))}
+                )
+                return contextItems.length > 0 ? (
+                  <Dropdown
+                    key={change.id}
+                    trigger={['contextMenu']}
+                    menu={{items: contextItems, onClick: ({key}) => handleChangeContextAction(change, key)}}>
+                    {card}
+                  </Dropdown>
+                ) : <React.Fragment key={change.id}>{card}</React.Fragment>
+              })}
               {visiblePackChanges.length === 0 && (
                 <div className="py-12 text-center text-gray-400">没有选中的文件变化</div>
               )}

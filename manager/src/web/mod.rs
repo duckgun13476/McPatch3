@@ -36,7 +36,8 @@ use crate::web::api::fs::upload::api_upload_fs;
 use crate::web::api::misc::version_list::api_version_list;
 use crate::web::api::public::api_public;
 use crate::web::api::task::changes::{
-    api_add_delete_file, api_add_hash_deletion, api_remove_delete_file, api_remove_hash_deletion,
+    api_add_delete_file, api_add_hash_deletion, api_convert_add_to_hash_deletion,
+    api_remove_delete_file, api_remove_hash_deletion,
 };
 use crate::web::api::task::check::api_status;
 use crate::web::api::task::combine::api_combine;
@@ -153,6 +154,10 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route(
             "/api/task/change/delete-file-by-hash",
             post(api_add_hash_deletion),
+        )
+        .route(
+            "/api/task/change/convert-add-to-hash-delete",
+            post(api_convert_add_to_hash_deletion),
         )
         .route(
             "/api/task/change/remove-delete-file-by-hash",

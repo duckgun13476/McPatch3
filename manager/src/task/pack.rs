@@ -12,7 +12,7 @@ use crate::core::data::index_file::{IndexFile, VersionIndex};
 use crate::core::data::pending_changes::PendingChanges;
 use crate::core::data::version_meta::{ClientHashDeletion, FileChange, VersionMeta};
 use crate::core::data::version_meta_group::VersionMetaGroup;
-use crate::core::file_hash::{calculate_hash, calculate_sha256};
+use crate::core::file_hash::calculate_hash;
 use crate::core::modrinth::attach_external_sources as attach_modrinth_sources;
 use crate::core::tar_writer::TarWriter;
 use crate::diff::abstract_file::AbstractFile;
@@ -133,23 +133,18 @@ pub fn build_pack_plan(
     }
 
     for deletion in pending.hash_deletions.iter().filter(|entry| entry.pending) {
-        if workspace_contains_sha256(
-            &apppath.workspace_dir.join(&deletion.search_root),
-            deletion.len,
-            &deletion.sha256,
-        )? {
+        if apppath.workspace_dir.join(&deletion.path).exists() {
             return Err(format!(
-                "客户端哈希删除目标仍存在于当前工作区，拒绝打包: {} ({})",
-                deletion.name_hint, deletion.sha256
+                "客户端哈希删除目标仍存在于当前工作区，拒绝打包: {}",
+                deletion.path
             ));
         }
         hash_deletions.push(ClientHashDeletion {
+            path: deletion.path.clone(),
             sha256: deletion.sha256.clone(),
             len: deletion.len,
-            name_hint: deletion.name_hint.clone(),
-            search_root: deletion.search_root.clone(),
         });
-        pending_hash_deletions.insert(deletion.sha256.clone());
+        pending_hash_deletions.insert(deletion.path.clone());
     }
 
     changes.sort_by_key(canonical_change);
@@ -226,8 +221,8 @@ pub fn select_pack_changes(
         .filter(|deletion| {
             let id = hash_deletion_id(deletion);
             let included = !excluded.contains(&id);
-            if included && plan.pending_hash_deletions.contains(&deletion.sha256) {
-                emitted_pending_hash_deletions.insert(deletion.sha256.clone());
+            if included && plan.pending_hash_deletions.contains(&deletion.path) {
+                emitted_pending_hash_deletions.insert(deletion.path.clone());
             }
             included
         })
@@ -288,12 +283,32 @@ pub fn task_pack(
     {
         let mut pending = pending;
         pending.mark_emitted(&selection.emitted_pending_deletions);
-        pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
+        let staged_files = pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
         if let Err(error) = pending.save(&apppath.pending_changes_file) {
             console.log_warning(format!("更新包已生成，但删除规则状态保存失败: {error}"));
+        } else {
+            cleanup_hash_delete_staging(apppath, staged_files, console);
         }
     }
     code
+}
+
+pub fn cleanup_hash_delete_staging(
+    apppath: &AppPath,
+    staged_files: Vec<String>,
+    console: &Console,
+) {
+    let staging_dir = apppath.working_dir.join(".mcpatch-hash-delete-staging");
+    for staged_file in staged_files {
+        let path = staging_dir.join(staged_file);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                console.log_warning(format!(
+                    "清理已打包的哈希删除暂存文件失败({path:?}): {error}"
+                ));
+            }
+        }
+    }
 }
 
 pub fn task_pack_selected(
@@ -514,7 +529,7 @@ fn preview_hash_deletion(deletion: &ClientHashDeletion) -> PackChangePreview {
     PackChangePreview {
         id: hash_deletion_id(deletion),
         operation: "delete-file-by-hash".to_owned(),
-        path: Some(deletion.name_hint.clone()),
+        path: Some(deletion.path.clone()),
         from: None,
         to: None,
         hash: Some(deletion.sha256.clone()),
@@ -613,10 +628,9 @@ mod tests {
     #[test]
     fn fingerprint_covers_hash_deletion_metadata() {
         let first = ClientHashDeletion {
+            path: ".minecraft/mods/old.jar".to_owned(),
             sha256: "a".repeat(64),
             len: 42,
-            name_hint: "old.jar".to_owned(),
-            search_root: ".minecraft/mods".to_owned(),
         };
         let mut second = first.clone();
         second.sha256 = "b".repeat(64);
@@ -663,40 +677,7 @@ fn hash_deletion_id(deletion: &ClientHashDeletion) -> String {
 
 fn canonical_hash_deletion(deletion: &ClientHashDeletion) -> String {
     format!(
-        "6|delete-file-by-hash|{}|{}|{}|{}",
-        deletion.search_root, deletion.sha256, deletion.len, deletion.name_hint
+        "6|delete-file-by-hash|{}|{}|{}",
+        deletion.path, deletion.sha256, deletion.len
     )
-}
-
-fn workspace_contains_sha256(
-    root: &std::path::Path,
-    len: u64,
-    expected: &str,
-) -> Result<bool, String> {
-    if !root.exists() {
-        return Ok(false);
-    }
-    let entries = std::fs::read_dir(root)
-        .map_err(|error| format!("读取工作区模组目录失败({root:?}): {error}"))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("读取工作区模组条目失败: {error}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("读取工作区模组类型失败({:?}): {error}", entry.path()))?;
-        if !file_type.is_file() {
-            continue;
-        }
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("读取工作区模组信息失败({:?}): {error}", entry.path()))?;
-        if metadata.len() != len {
-            continue;
-        }
-        let mut file = std::fs::File::open(entry.path())
-            .map_err(|error| format!("读取工作区模组失败({:?}): {error}", entry.path()))?;
-        if calculate_sha256(&mut file) == expected {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

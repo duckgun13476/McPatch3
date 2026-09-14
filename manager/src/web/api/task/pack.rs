@@ -4,7 +4,9 @@ use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
 
-use crate::task::pack::{build_pack_plan, select_pack_changes, task_pack_selected};
+use crate::task::pack::{
+    build_pack_plan, cleanup_hash_delete_staging, select_pack_changes, task_pack_selected,
+};
 use crate::web::api::PublicResponseBody;
 use crate::web::webstate::WebState;
 
@@ -73,11 +75,14 @@ pub async fn api_pack(
                 {
                     let mut pending = state.pending_changes.blocking_lock();
                     pending.mark_emitted(&selection.emitted_pending_deletions);
-                    pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
+                    let staged_files =
+                        pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
                     if let Err(error) = pending.save(&state.apppath.pending_changes_file) {
                         state
                             .console
                             .log_warning(format!("更新包已生成，但删除规则状态保存失败: {error}"));
+                    } else {
+                        cleanup_hash_delete_staging(&state.apppath, staged_files, &state.console);
                     }
                 }
                 state.status.blocking_lock().invalidate();

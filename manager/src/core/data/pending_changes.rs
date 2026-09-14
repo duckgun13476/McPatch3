@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
@@ -24,10 +24,10 @@ pub struct ForcedDeletion {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PendingHashDeletion {
+    pub path: String,
     pub sha256: String,
     pub len: u64,
-    pub name_hint: String,
-    pub search_root: String,
+    pub staged_file: Option<String>,
     pub pending: bool,
 }
 
@@ -54,7 +54,24 @@ impl PendingChanges {
 
         let content = std::fs::read_to_string(source)
             .map_err(|error| format!("读取待处理变更失败: {error}"))?;
-        let mut state: Self = serde_json::from_str(&content)
+        let mut value: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|error| format!("解析待处理变更失败: {error}"))?;
+
+        if value.get("schema").and_then(|value| value.as_u64()) == Some(1) {
+            let has_legacy_hash_deletions = value
+                .get("hash-deletions")
+                .and_then(|value| value.as_array())
+                .is_some_and(|entries| !entries.is_empty());
+            if has_legacy_hash_deletions {
+                return Err(
+                    "检测到旧版无路径哈希删除规则；为避免误删，必须先在旧版管理端撤销这些规则"
+                        .to_owned(),
+                );
+            }
+            value["schema"] = serde_json::Value::from(SCHEMA_VERSION);
+        }
+
+        let mut state: Self = serde_json::from_value(value)
             .map_err(|error| format!("解析待处理变更失败: {error}"))?;
 
         if state.schema != SCHEMA_VERSION {
@@ -64,16 +81,21 @@ impl PendingChanges {
         let mut seen = HashSet::new();
         for deletion in &mut state.forced_deletions {
             deletion.path = normalize_client_path(&deletion.path)?;
-            if !seen.insert(deletion.path.clone()) {
+            if !seen.insert(path_key(&deletion.path)) {
                 return Err(format!("重复的客户端删除路径: {}", deletion.path));
             }
         }
         for deletion in &mut state.hash_deletions {
+            deletion.path = normalize_client_path(&deletion.path)?;
             deletion.sha256 = normalize_sha256(&deletion.sha256)?;
-            deletion.search_root = normalize_hash_search_root(&deletion.search_root)?;
-            deletion.name_hint = normalize_name_hint(&deletion.name_hint)?;
-            if !seen.insert(format!("hash:{}", deletion.sha256)) {
-                return Err(format!("重复的客户端删除哈希: {}", deletion.sha256));
+            if let Some(staged_file) = &deletion.staged_file {
+                normalize_staged_file(staged_file)?;
+            }
+            if !seen.insert(path_key(&deletion.path)) {
+                return Err(format!(
+                    "客户端路径存在重复或冲突的删除规则: {}",
+                    deletion.path
+                ));
             }
         }
 
@@ -118,10 +140,17 @@ impl PendingChanges {
 
     pub fn add_forced_deletion(&mut self, path: &str) -> Result<String, String> {
         let path = normalize_client_path(path)?;
+        if self
+            .hash_deletions
+            .iter()
+            .any(|entry| paths_equal(&entry.path, &path))
+        {
+            return Err(format!("该路径已登记为哈希删除: {path}"));
+        }
         if let Some(existing) = self
             .forced_deletions
             .iter_mut()
-            .find(|entry| entry.path == path)
+            .find(|entry| paths_equal(&entry.path, &path))
         {
             existing.pending = true;
             return Ok(path);
@@ -139,46 +168,66 @@ impl PendingChanges {
     pub fn remove_forced_deletion(&mut self, path: &str) -> Result<bool, String> {
         let path = normalize_client_path(path)?;
         let before = self.forced_deletions.len();
-        self.forced_deletions.retain(|entry| entry.path != path);
+        self.forced_deletions
+            .retain(|entry| !paths_equal(&entry.path, &path));
         Ok(before != self.forced_deletions.len())
     }
 
     pub fn add_hash_deletion(
         &mut self,
+        path: &str,
         sha256: &str,
         len: u64,
-        name_hint: &str,
+        staged_file: Option<String>,
     ) -> Result<String, String> {
+        let path = normalize_client_path(path)?;
         let sha256 = normalize_sha256(sha256)?;
-        let name_hint = normalize_name_hint(name_hint)?;
-        let search_root = ".minecraft/mods".to_owned();
+        if let Some(staged_file) = &staged_file {
+            normalize_staged_file(staged_file)?;
+        }
+        if self
+            .forced_deletions
+            .iter()
+            .any(|entry| paths_equal(&entry.path, &path))
+        {
+            return Err(format!("该路径已登记为强制删除: {path}"));
+        }
         if let Some(existing) = self
             .hash_deletions
             .iter_mut()
-            .find(|entry| entry.sha256 == sha256)
+            .find(|entry| paths_equal(&entry.path, &path))
         {
+            existing.sha256 = sha256;
             existing.len = len;
-            existing.name_hint = name_hint;
+            existing.staged_file = staged_file;
             existing.pending = true;
-            return Ok(sha256);
+            return Ok(path);
         }
         self.hash_deletions.push(PendingHashDeletion {
-            sha256: sha256.clone(),
+            path: path.clone(),
+            sha256,
             len,
-            name_hint,
-            search_root,
+            staged_file,
             pending: true,
         });
         self.hash_deletions
-            .sort_by(|left, right| left.name_hint.cmp(&right.name_hint));
-        Ok(sha256)
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(path)
     }
 
-    pub fn remove_hash_deletion(&mut self, sha256: &str) -> Result<bool, String> {
-        let sha256 = normalize_sha256(sha256)?;
-        let before = self.hash_deletions.len();
-        self.hash_deletions.retain(|entry| entry.sha256 != sha256);
-        Ok(before != self.hash_deletions.len())
+    pub fn remove_hash_deletion(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<PendingHashDeletion>, String> {
+        let path = normalize_client_path(path)?;
+        let Some(index) = self
+            .hash_deletions
+            .iter()
+            .position(|entry| paths_equal(&entry.path, &path))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.hash_deletions.remove(index)))
     }
 
     pub fn mark_emitted<'a>(&mut self, paths: impl IntoIterator<Item = &'a String>) {
@@ -190,13 +239,21 @@ impl PendingChanges {
         }
     }
 
-    pub fn mark_hash_emitted<'a>(&mut self, hashes: impl IntoIterator<Item = &'a String>) {
-        let emitted = hashes.into_iter().collect::<HashSet<_>>();
+    pub fn mark_hash_emitted<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a String>,
+    ) -> Vec<String> {
+        let emitted = paths.into_iter().collect::<HashSet<_>>();
+        let mut staged_files = Vec::new();
         for deletion in &mut self.hash_deletions {
-            if emitted.contains(&deletion.sha256) {
+            if emitted.contains(&deletion.path) {
                 deletion.pending = false;
+                if let Some(staged_file) = deletion.staged_file.take() {
+                    staged_files.push(staged_file);
+                }
             }
         }
+        staged_files
     }
 }
 
@@ -208,18 +265,14 @@ fn normalize_sha256(value: &str) -> Result<String, String> {
     Ok(value)
 }
 
-fn normalize_hash_search_root(value: &str) -> Result<String, String> {
-    if value == ".minecraft/mods" {
-        Ok(value.to_owned())
-    } else {
-        Err("按哈希删除目前只允许扫描 .minecraft/mods".to_owned())
-    }
-}
-
-fn normalize_name_hint(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 255 || value.contains(['/', '\\']) {
-        return Err("客户端删除文件名提示无效".to_owned());
+fn normalize_staged_file(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err("哈希删除暂存文件名无效".to_owned());
     }
     Ok(value.to_owned())
 }
@@ -244,9 +297,29 @@ pub fn normalize_client_path(path: &str) -> Result<String, String> {
     Ok(normalized.join("/"))
 }
 
+fn path_key(path: &str) -> String {
+    path.to_ascii_lowercase()
+}
+
+fn paths_equal(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{normalize_client_path, PendingChanges};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_state_file(name: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "mcpatch-{name}-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn normalizes_safe_client_paths() {
@@ -283,16 +356,61 @@ mod tests {
     fn hash_deletions_are_exact_deduplicated_and_bounded() {
         let mut state = PendingChanges::default();
         let hash = "a".repeat(64);
-        state.add_hash_deletion(&hash, 42, "old.jar").unwrap();
-        state.mark_hash_emitted([&hash]);
+        let path = ".minecraft/mods/old.jar";
+        state.add_hash_deletion(path, &hash, 42, None).unwrap();
+        let owned_path = path.to_owned();
+        state.mark_hash_emitted([&owned_path]);
         assert!(!state.hash_deletions[0].pending);
-        state.add_hash_deletion(&hash, 43, "renamed.jar").unwrap();
+        state.add_hash_deletion(path, &hash, 43, None).unwrap();
         assert_eq!(state.hash_deletions.len(), 1);
         assert_eq!(state.hash_deletions[0].len, 43);
         assert!(state.hash_deletions[0].pending);
-        assert!(state.add_hash_deletion("bad", 1, "bad.jar").is_err());
         assert!(state
-            .add_hash_deletion(&"b".repeat(64), 1, "../bad.jar")
+            .add_hash_deletion("../bad.jar", &"b".repeat(64), 1, None)
             .is_err());
+        assert!(state.add_hash_deletion(path, "bad", 1, None).is_err());
+    }
+
+    #[test]
+    fn exact_path_delete_modes_are_mutually_exclusive() {
+        let mut state = PendingChanges::default();
+        let path = ".minecraft/mods/old.jar";
+        state
+            .add_hash_deletion(path, &"a".repeat(64), 42, None)
+            .unwrap();
+        assert!(state
+            .add_forced_deletion(".MINECRAFT/MODS/OLD.JAR")
+            .is_err());
+
+        state.remove_hash_deletion(path).unwrap();
+        state.add_forced_deletion(path).unwrap();
+        assert!(state
+            .add_hash_deletion(".MINECRAFT/MODS/OLD.JAR", &"b".repeat(64), 42, None)
+            .is_err());
+    }
+
+    #[test]
+    fn migrates_empty_schema_one_but_rejects_unsafe_legacy_hash_rules() {
+        let empty = temp_state_file("pending-empty-v1");
+        std::fs::write(
+            &empty,
+            r#"{"schema":1,"forced-deletions":[],"hash-deletions":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(PendingChanges::load(&empty).unwrap().schema, 2);
+        std::fs::remove_file(&empty).unwrap();
+
+        let legacy = temp_state_file("pending-hash-v1");
+        std::fs::write(
+            &legacy,
+            format!(
+                r#"{{"schema":1,"forced-deletions":[],"hash-deletions":[{{"sha256":"{}","len":1,"name-hint":"old.jar","search-root":".minecraft/mods","pending":true}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let error = PendingChanges::load(&legacy).unwrap_err();
+        assert!(error.contains("旧版无路径哈希删除规则"));
+        std::fs::remove_file(&legacy).unwrap();
     }
 }
