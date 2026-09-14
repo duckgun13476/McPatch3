@@ -98,15 +98,15 @@ impl UpdatingSource for PrivateProtocol {
         let index = self.index;
         let stream = stream_lock.as_mut().unwrap();
 
-        // 首先发送文件路径
-        send_data(stream, path.as_bytes()).await?;
-
-        // 然后发送下载范围
-        stream.write_all(&range.start.to_le_bytes()).await?;
-        stream.write_all(&range.end.to_le_bytes()).await?;
-
-        // 接收状态码或者文件大小（64位有符号整数）
-        let len = stream.read_i64_le().await?;
+        let len = match request_length(stream, path, range).await {
+            Ok(len) => len,
+            Err(error) => {
+                // A private-protocol connection may be closed while CDN bootstrap files
+                // are downloading. Never retry on the same known-dead socket.
+                *stream_lock = None;
+                return Err(error);
+            }
+        };
 
         if len < 0 {
             return Ok(Err(BusinessError::new(format!(
@@ -124,6 +124,17 @@ impl UpdatingSource for PrivateProtocol {
     fn mask_keyword(&self) -> &str {
         &self.mask_keyword
     }
+}
+
+async fn request_length(
+    stream: &mut TcpStream,
+    path: &str,
+    range: &Range<u64>,
+) -> std::io::Result<i64> {
+    send_data(stream, path.as_bytes()).await?;
+    stream.write_all(&range.start.to_le_bytes()).await?;
+    stream.write_all(&range.end.to_le_bytes()).await?;
+    stream.read_i64_le().await
 }
 
 /// 发送一个数据帧
@@ -192,9 +203,110 @@ impl AsyncRead for PrivatePartialAsyncRead {
 
                 self.1 -= adv as u64;
 
-                std::task::Poll::Ready(ready)
+                match ready {
+                    Ok(()) if adv == 0 && self.1 != 0 => {
+                        *self.0 = None;
+                        self.1 = 0;
+                        std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "private protocol response ended before the advertised length",
+                        )))
+                    }
+                    Err(error) => {
+                        *self.0 = None;
+                        self.1 = 0;
+                        std::task::Poll::Ready(Err(error))
+                    }
+                    Ok(()) => std::task::Poll::Ready(Ok(())),
+                }
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+
+    fn test_config() -> GlobalConfig {
+        GlobalConfig {
+            urls: Vec::new(),
+            version_file_path: String::new(),
+            allow_error: false,
+            show_finish_message: false,
+            show_changelogs_message: false,
+            silent_mode: false,
+            window_title: String::new(),
+            changelogs_window_title: String::new(),
+            base_path: String::new(),
+            private_timeout: 1_000,
+            http_headers: Vec::new(),
+            http_timeout: 1_000,
+            http_retries: 1,
+            http_ignore_certificate: false,
+            run_after_update: String::new(),
+            show_console: false,
+        }
+    }
+
+    async fn read_request(stream: &mut TcpStream) {
+        let path_len = stream.read_u64_le().await.unwrap();
+        let mut path = vec![0; path_len as usize];
+        stream.read_exact(&mut path).await.unwrap();
+        stream.read_u64_le().await.unwrap();
+        stream.read_u64_le().await.unwrap();
+    }
+
+    async fn send_response(stream: &mut TcpStream, body: &[u8]) {
+        stream.write_i64_le(body.len() as i64).await.unwrap();
+        stream.write_all(body).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discards_idle_closed_connection_before_retry() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            read_request(&mut first).await;
+            send_response(&mut first, b"profile").await;
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.unwrap();
+            read_request(&mut second).await;
+            send_response(&mut second, b"index").await;
+        });
+
+        let config = test_config();
+        let mut protocol = PrivateProtocol::new(&addr.to_string(), &config, 0);
+
+        let (_, mut first_body) = protocol
+            .request("ui-profile.json", &(0..0), "profile", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut first_text = String::new();
+        first_body.read_to_string(&mut first_text).await.unwrap();
+        assert_eq!(first_text, "profile");
+        drop(first_body);
+
+        let stale_result = protocol
+            .request("index.json", &(0..0), "index", &config)
+            .await;
+        assert!(stale_result.is_err());
+        assert!(protocol.tcp_stream.lock().await.is_none());
+
+        let (_, mut retry_body) = protocol
+            .request("index.json", &(0..0), "index", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut retry_text = String::new();
+        retry_body.read_to_string(&mut retry_text).await.unwrap();
+        assert_eq!(retry_text, "index");
+        server.await.unwrap();
     }
 }
