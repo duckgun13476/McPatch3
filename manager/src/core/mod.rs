@@ -15,6 +15,8 @@
 pub mod tar_reader;
 pub mod tar_writer;
 pub mod archive_tester;
+pub mod curseforge;
+pub mod modrinth;
 pub mod rule_filter;
 pub mod data;
 pub mod file_hash;

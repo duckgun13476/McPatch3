@@ -51,6 +51,14 @@ use std::time::UNIX_EPOCH;
 
 use json::JsonValue;
 
+/// 可选的外部下载源。客户端仅在校验最终内容后才采用它。
+#[derive(Clone)]
+pub struct ExternalSource {
+    pub provider: String,
+    pub url: String,
+    pub fallback_to_mcpatch: bool,
+}
+
 /// 代表单个文件操作
 #[derive(Clone)]
 pub enum FileChange {
@@ -75,7 +83,10 @@ pub enum FileChange {
         modified: SystemTime, 
 
         /// 文件二进制数据在更新包中的偏移值
-        offset: u64
+        offset: u64,
+
+        /// 可选的外部直链；旧客户端忽略该字段。
+        external_source: Option<ExternalSource>
     },
 
     /// 删除一个目录
@@ -160,6 +171,7 @@ impl VersionMeta {
                     len: v["len"].as_u64().unwrap(), 
                     modified: UNIX_EPOCH.add(Duration::from_secs(v["modified"].as_u64().unwrap())), 
                     offset: v["offset"].as_u64().unwrap(),
+                    external_source: Self::parse_external_source(&v["external-source"]),
                 }
             },
             "delete-directory" => {
@@ -182,6 +194,16 @@ impl VersionMeta {
         }
     }
 
+    fn parse_external_source(v: &JsonValue) -> Option<ExternalSource> {
+        let provider = v["provider"].as_str()?;
+        let url = v["url"].as_str()?;
+        Some(ExternalSource {
+            provider: provider.to_owned(),
+            url: url.to_owned(),
+            fallback_to_mcpatch: v["fallback-to-mcpatch"].as_bool().unwrap_or(true),
+        })
+    }
+
     /// 序列化一个文件变动操作
     fn serialize_change(change: &FileChange) -> JsonValue {
         let mut obj = JsonValue::new_object();
@@ -191,13 +213,20 @@ impl VersionMeta {
                 obj.insert("operation", "create-directory").unwrap();
                 obj.insert("path", path.to_owned()).unwrap();
             },
-            FileChange::UpdateFile { path, hash, len, modified, offset } => {
+            FileChange::UpdateFile { path, hash, len, modified, offset, external_source } => {
                 obj.insert("operation", "update-file").unwrap();
                 obj.insert("path", path.to_owned()).unwrap();
                 obj.insert("hash", hash.to_owned()).unwrap();
                 obj.insert("len", len.to_owned()).unwrap();
                 obj.insert("modified", modified.duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap();
                 obj.insert("offset", offset.to_owned()).unwrap();
+                if let Some(source) = external_source {
+                    let mut external = JsonValue::new_object();
+                    external.insert("provider", source.provider.to_owned()).unwrap();
+                    external.insert("url", source.url.to_owned()).unwrap();
+                    external.insert("fallback-to-mcpatch", source.fallback_to_mcpatch).unwrap();
+                    obj.insert("external-source", external).unwrap();
+                }
             },
             FileChange::DeleteFolder { path } => {
                 obj.insert("operation", "delete-directory").unwrap();

@@ -339,6 +339,7 @@ impl<N: AbstractFile, O: AbstractFile> Diff<N, O> {
                 len: f.len(), 
                 modified: f.modified(), 
                 offset: 0, // 此时offset是空的，需要由TarWriter去填充
+                external_source: None,
             })
         }
 
@@ -349,6 +350,7 @@ impl<N: AbstractFile, O: AbstractFile> Diff<N, O> {
                 len: f.len(), 
                 modified: f.modified(), 
                 offset: 0, // 此时offset是空的，需要由TarWriter去填充
+                external_source: None,
             })
         }
     

@@ -64,6 +64,7 @@ pub async fn api_pack(
                 payload.change_logs,
                 changes,
                 &state.apppath,
+                &state.config,
                 &state.console,
             );
             if code == 0 {

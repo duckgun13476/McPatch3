@@ -5,11 +5,15 @@ use crate::app_path::AppPath;
 use crate::core::data::ui_profile::ensure_ui_profile;
 use crate::config::builtin_server_config::BuiltinServerConfig;
 use crate::config::core_config::CoreConfig;
+use crate::config::curseforge_config::CurseForgeConfig;
+use crate::config::modrinth_config::ModrinthConfig;
 use crate::config::s3_config::S3Config;
 use crate::config::web_config::WebConfig;
 use crate::config::webdav_config::WebdavConfig;
 
 pub mod core_config;
+pub mod curseforge_config;
+pub mod modrinth_config;
 pub mod web_config;
 pub mod auth_config;
 pub mod builtin_server_config;
@@ -34,6 +38,12 @@ pub struct Config {
 
     /// webdav上传相关配置项
     pub webdav: WebdavConfig,
+
+    /// CurseForge 外部直链相关配置项。
+    pub curseforge: CurseForgeConfig,
+
+    /// Modrinth 外部直链相关配置项。默认优先于 CurseForge。
+    pub modrinth: ModrinthConfig,
 }
 
 impl Config {

@@ -7,9 +7,11 @@ use sha2::{Digest, Sha256};
 use crate::app_path::AppPath;
 use crate::config::Config;
 use crate::core::archive_tester::ArchiveTester;
+use crate::core::curseforge::attach_external_sources;
 use crate::core::data::index_file::{IndexFile, VersionIndex};
 use crate::core::data::pending_changes::PendingChanges;
 use crate::core::data::version_meta::{FileChange, VersionMeta};
+use crate::core::modrinth::attach_external_sources as attach_modrinth_sources;
 use crate::core::data::version_meta_group::VersionMetaGroup;
 use crate::core::file_hash::calculate_hash;
 use crate::core::tar_writer::TarWriter;
@@ -213,7 +215,7 @@ pub fn task_pack(
             return 1;
         }
     };
-    let code = task_pack_selected(version_label, change_logs, changes, apppath, console);
+    let code = task_pack_selected(version_label, change_logs, changes, apppath, config, console);
     if code == 0 && !emitted.is_empty() {
         let mut pending = pending;
         pending.mark_emitted(&emitted);
@@ -229,6 +231,7 @@ pub fn task_pack_selected(
     change_logs: String,
     changes: Vec<FileChange>,
     apppath: &AppPath,
+    config: &Config,
     console: &Console,
 ) -> u8 {
     let version_label = version_label.trim().to_owned();
@@ -272,6 +275,26 @@ pub fn task_pack_selected(
         }
     }
 
+    let mut changes = changes.into_iter().collect::<LinkedList<_>>();
+    match attach_modrinth_sources(&mut changes, &apppath.workspace_dir, &config.modrinth) {
+        Ok(count) if count > 0 => {
+            console.log_info(format!("Modrinth 外部下载源已匹配 {count} 个 mod"))
+        }
+        Ok(_) => (),
+        Err(error) => console.log_warning(format!(
+            "Modrinth 外部下载源未启用: {error}；将尝试 CurseForge 或 mcpatch"
+        )),
+    }
+    match attach_external_sources(&mut changes, &apppath.workspace_dir, &config.curseforge) {
+        Ok(count) if count > 0 => {
+            console.log_info(format!("CurseForge 外部下载源已匹配 {count} 个 mod"))
+        }
+        Ok(_) => (),
+        Err(error) => console.log_warning(format!(
+            "CurseForge 外部下载源未启用: {error}；其余 mod 将只使用 mcpatch"
+        )),
+    }
+
     std::fs::create_dir_all(&apppath.public_dir).unwrap();
     let version_filename = format!("{version_label}.tar");
     let version_file = apppath.public_dir.join(&version_filename);
@@ -295,10 +318,9 @@ pub fn task_pack_selected(
     let meta = VersionMeta::new(
         version_label.clone(),
         change_logs,
-        changes.into_iter().collect::<LinkedList<_>>(),
+        changes,
     );
     let meta_info = writer.finish(VersionMetaGroup::with_one(meta));
-
     index_file.add(VersionIndex {
         label: version_label.clone(),
         filename: version_filename,
@@ -327,7 +349,6 @@ pub fn task_pack_selected(
     console.log_info("测试通过，打包完成！");
     0
 }
-
 fn change_writes_path(change: &FileChange, expected: &str) -> bool {
     match change {
         FileChange::CreateFolder { path } | FileChange::UpdateFile { path, .. } => path == expected,
