@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Button, Dropdown, Input, message, Modal, Popconfirm, Popover, Select, Tag, Tooltip, Upload} from "antd";
+import {Button, Dropdown, Input, message, Modal, Popconfirm, Popover, Segmented, Tag, Tooltip, Upload} from "antd";
 import {
   taskAddDeleteFileRequest,
   taskAddHashDeletionRequest, taskCombineRequest, taskConvertAddToHashDeletionRequest, taskPackRequest,
@@ -8,11 +8,15 @@ import {
   taskTestRequest,
   taskUploadRequest
 } from "@/api/task.js";
-import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
-import {ArrowLeft, FileMinus2, Plus, RotateCcw, Undo2, X} from "lucide-react";
+import {terminalStreamRequest} from "@/api/terminal.js";
+import {ArrowLeft, FileMinus2, Grid2X2, List, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Undo2, X} from "lucide-react";
 import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
 import {hasVersionWhitespace, nextPatchVersion} from "@/utils/version.js";
+import {fsDiskInfoRequest, fsListRequest} from "@/api/fs.js";
+import FileBreadcrumb from "@/components/FileBreadcrumb/index.jsx";
+import FolderButtonGroup from "@/components/FolderButtonGroup/index.jsx";
+import TileViewFileExplorer from "@/components/TileViewFileExplorer/index.jsx";
 
 const {TextArea} = Input;
 
@@ -56,19 +60,10 @@ const VersionList = ({versionList}) => {
 }
 
 const Index = () => {
-
-  const options = [
-    {value: 3000, label: '3s'},
-    {value: 1000, label: '1s'},
-    {value: 5000, label: '5s'},
-    {value: 10000, label: '10s'},
-  ]
-
   const [logs, setLogs] = useState([])
   const [packShow, setPackShow] = useState(false)
   const [version, setVersion] = useState('');
   const [updateRecord, setUpdateRecord] = useState('');
-  const [refreshInterval, setRefreshInterval] = useState(parseInt(localStorage.getItem('logRefreshInterval')) || options[0].value);
   const [versionList, setVersionList] = useState([])
   const [packPreview, setPackPreview] = useState(null)
   const [excludedChangeIds, setExcludedChangeIds] = useState([])
@@ -76,51 +71,129 @@ const Index = () => {
   const [hashDeletePath, setHashDeletePath] = useState('')
   const [packLoading, setPackLoading] = useState(false)
   const [hashDeleteLoading, setHashDeleteLoading] = useState(false)
+  const [diskInfo, setDiskInfo] = useState({total: 0, used: 0, workspace_used: 0, workspace_files: 0, public_used: 0, public_files: 0})
+  const [path, setPath] = useState(JSON.parse(localStorage.getItem('filePath')) || [])
+  const [fileList, setFileList] = useState([])
+  const [viewMode, setViewMode] = useState(localStorage.getItem('fileViewMode') || 'grid')
+  const [logCollapsed, setLogCollapsed] = useState(localStorage.getItem('logCollapsed') === 'true')
+  const [streamState, setStreamState] = useState('connecting')
+  const [streamEpoch, setStreamEpoch] = useState(0)
+  const [autoFollow, setAutoFollow] = useState(true)
   const logsRef = useRef(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
-    terminalFull()
-  }, []);
-
-  useEffect(() => {
-    if (logsRef.current) {
+    if (logsRef.current && autoFollow) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [logs, autoFollow]);
 
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      terminalMore()
-    }, refreshInterval)
+    let stopped = false
+    let reconnectTimer = null
+    let controller = null
 
-    return () => clearInterval(intervalId);
-  }, [refreshInterval])
+    const connect = async () => {
+      controller = new AbortController()
+      setStreamState('connecting')
+      try {
+        const response = await terminalStreamRequest(controller.signal)
+        const contentType = response.headers.get('content-type') || ''
+        if (!response.ok || !contentType.includes('text/event-stream')) {
+          throw new Error(`日志流响应异常: HTTP ${response.status}`)
+        }
+
+        setLogs([])
+        setStreamState('live')
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (!stopped) {
+          const {done, value} = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, {stream: true})
+          const blocks = buffer.split(/\r?\n\r?\n/)
+          buffer = blocks.pop() || ''
+          const entries = []
+          blocks.forEach(block => {
+            const payload = block.split(/\r?\n/)
+              .filter(line => line.startsWith('data:'))
+              .map(line => line.slice(5).trimStart())
+              .join('\n')
+            if (!payload) return
+            try {
+              entries.push(JSON.parse(payload))
+            } catch {
+              // Ignore malformed stream frames; the next valid frame remains usable.
+            }
+          })
+          if (entries.length > 0) {
+            setLogs(current => current.concat(entries).slice(-1000))
+          }
+        }
+        if (!stopped) throw new Error('日志流已断开')
+      } catch (error) {
+        if (stopped || error.name === 'AbortError') return
+        setStreamState('reconnecting')
+        reconnectTimer = setTimeout(connect, 1500)
+      }
+    }
+
+    connect()
+    return () => {
+      stopped = true
+      controller?.abort()
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+    }
+  }, [streamEpoch])
 
   useEffect(() => {
     miscVersionList()
+    getDiskInfo()
   }, []);
 
-  const terminalFull = async () => {
-    const {code, msg, data} = await terminalFullRequest();
+  useEffect(() => {
+    localStorage.setItem('filePath', JSON.stringify(path))
+    getFileList()
+  }, [path])
+
+  const getDiskInfo = async () => {
+    const {code, data} = await fsDiskInfoRequest()
+    if (code === 1) setDiskInfo(data)
+  }
+
+  const getFileList = async () => {
+    const {code, data} = await fsListRequest(path.join('/'))
     if (code === 1) {
-      setLogs(data.content)
+      const sorted = [...data.files].sort((a, b) => {
+        if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1
+        return a.name.localeCompare(b.name, 'zh-CN')
+      })
+      setFileList(sorted)
     }
   }
 
-  const terminalMore = async () => {
-    const {code, msg, data} = await terminalMoreRequest();
-    if (code === 1) {
-      if (data.content.length !== 0) {
-        setLogs(prev => prev.concat(data.content))
-      }
-    }
+  const handlerNextPath = item => setPath(current => [...current, item.name])
+  const handlerBreadcrumb = index => setPath(current => current.slice(0, index))
+
+  const changeViewMode = value => {
+    setViewMode(value)
+    localStorage.setItem('fileViewMode', value)
   }
 
-  const changeRefreshInterval = (value) => {
-    setRefreshInterval(value)
-    localStorage.setItem('logRefreshInterval', value)
-  };
+  const toggleLogs = () => {
+    setLogCollapsed(current => {
+      localStorage.setItem('logCollapsed', (!current).toString())
+      return !current
+    })
+  }
+
+  const handleLogScroll = () => {
+    const element = logsRef.current
+    if (!element) return
+    setAutoFollow(element.scrollHeight - element.scrollTop - element.clientHeight < 28)
+  }
 
   const miscVersionList = async () => {
     const {code, msg, data} = await miscVersionListRequest();
@@ -374,16 +447,16 @@ const Index = () => {
   return (
     <>
       {contextHolder}
-      <div className="flex flex-col p-10 min-h-screen">
-        <div className="flex justify-start items-center h-8">
+      <div className="flex h-screen min-h-[720px] flex-col overflow-hidden p-6">
+        <div className="flex flex-wrap items-center gap-2">
           <VersionList versionList={versionList}/>
           <Popconfirm title="将回放并校验全部历史更新包，是否继续？" onConfirm={taskTest} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">校验全部更新包</Button>
+            <Button size="large">校验全部更新包</Button>
           </Popconfirm>
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskUpload} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">上传public目录</Button>
+            <Button size="large">上传 public 目录</Button>
           </Popconfirm>
-          <Button type="primary" size="large" className="ml-2" onClick={() => {
+          <Button type="primary" size="large" onClick={() => {
             const nextVersion = nextPatchVersion(versionList[0]?.label)
             if (nextVersion === '') {
               messageApi.error('无法从最新版本生成下一个版本号。')
@@ -393,38 +466,94 @@ const Index = () => {
             setPackShow(true)
           }}>打包新版本</Button>
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskRevert} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">回退整个工作空间</Button>
+            <Button size="large" danger>回退工作空间</Button>
           </Popconfirm>
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskCombine} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">合并更新包</Button>
+            <Button size="large">合并更新包</Button>
           </Popconfirm>
-          <Select
-            defaultValue={refreshInterval}
-            size={"large"}
-            className="ml-auto w-40"
-            onChange={changeRefreshInterval}
-            options={options}/>
-          <Button type="primary" size="large" className="ml-2" icon={<RotateCcw size={20} strokeWidth={1.5}/>}
-                  onClick={terminalMore}/>
-
         </div>
-        <div
-          ref={logsRef}
-          className="flex-1 mt-8 bg-black dark:bg-gray-800 text-white overflow-auto min-h-[calc(100vh-160px)] max-h-[calc(100vh-160px)]">
-          {
-            logs.map((item, index) => {
-              return (
-                <div
-                  key={index}
-                  onClick={() => copy(item)}
-                  className="flex items-center pt-0.5 pb-0.5 pl-2 text-base text-gray-300 rounded cursor-pointer select-none hover:bg-gray-700 duration-200">
-                  <span className="w-48">[{showTime(item.time)}]</span>
-                  {/*<span className={`w-24 ${getTextColor(item.level)}`}>[{item.level}]</span>*/}
-                  <span className={`${getTextColor(item.level)}`}>{item.content}</span>
-                </div>
-              )
-            })
-          }
+
+        <div className="mt-5 grid grid-cols-4 border-y border-gray-200 py-3 dark:border-gray-800">
+          <div className="border-r border-gray-200 px-4 dark:border-gray-800">
+            <div className="text-xs text-gray-500">当前版本</div>
+            <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">{versionList[0]?.label || '-'}</div>
+          </div>
+          <div className="border-r border-gray-200 px-4 dark:border-gray-800">
+            <div className="text-xs text-gray-500">更新包占用</div>
+            <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">{showFileSize(diskInfo.public_used)}</div>
+            <div className="text-xs text-gray-400">{diskInfo.public_files} 个文件</div>
+          </div>
+          <div className="border-r border-gray-200 px-4 dark:border-gray-800">
+            <div className="text-xs text-gray-500">工作目录</div>
+            <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">{showFileSize(diskInfo.workspace_used)}</div>
+            <div className="text-xs text-gray-400">{diskInfo.workspace_files} 个文件</div>
+          </div>
+          <div className="px-4">
+            <div className="text-xs text-gray-500">磁盘使用</div>
+            <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">
+              {diskInfo.total > 0 ? `${(diskInfo.used / diskInfo.total * 100).toFixed(1)}%` : '-'}
+            </div>
+            <div className="text-xs text-gray-400">{showFileSize(diskInfo.used)} / {showFileSize(diskInfo.total)}</div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex min-h-0 flex-1 gap-4">
+          <main className="flex min-w-0 flex-1 flex-col overflow-hidden border border-gray-200 dark:border-gray-800">
+            <div className="flex items-end justify-between gap-4 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+              <FileBreadcrumb path={path} handlerBreadcrumb={handlerBreadcrumb}/>
+              <Segmented
+                value={viewMode}
+                onChange={changeViewMode}
+                options={[
+                  {value: 'grid', icon: <Tooltip title="图标视图"><Grid2X2 size={17}/></Tooltip>},
+                  {value: 'list', icon: <Tooltip title="列表视图"><List size={18}/></Tooltip>}
+                ]}/>
+            </div>
+            <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+              <FolderButtonGroup path={path} getFileList={() => { getFileList(); getDiskInfo() }}/>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-gray-50 dark:bg-gray-900">
+              <TileViewFileExplorer
+                path={path}
+                getFileList={() => { getFileList(); getDiskInfo() }}
+                items={fileList}
+                handlerNextPath={handlerNextPath}
+                viewMode={viewMode}/>
+            </div>
+          </main>
+
+          <aside className={`${logCollapsed ? 'w-12' : 'w-[34%] min-w-[360px] max-w-[680px]'} flex shrink-0 flex-col overflow-hidden border border-gray-200 bg-gray-950 transition-[width] duration-200 dark:border-gray-800`}>
+            <div className={`flex h-12 shrink-0 items-center border-b border-gray-800 ${logCollapsed ? 'justify-center px-1' : 'gap-2 px-3'}`}>
+              {!logCollapsed && (
+                <>
+                  <div className={`h-2 w-2 rounded-full ${streamState === 'live' ? 'bg-emerald-500' : 'bg-amber-500'}`}/>
+                  <span className="text-sm font-medium text-gray-100">实时日志</span>
+                  <span className="text-xs text-gray-500">{streamState === 'live' ? '已连接' : streamState === 'connecting' ? '连接中' : '正在重连'}</span>
+                  {!autoFollow && <span className="ml-auto text-xs text-amber-400">已暂停跟随</span>}
+                  <Tooltip title="重新连接">
+                    <Button type="text" className={`${autoFollow ? 'ml-auto' : ''} text-gray-300`} icon={<RotateCcw size={17}/>} onClick={() => setStreamEpoch(value => value + 1)}/>
+                  </Tooltip>
+                </>
+              )}
+              <Tooltip title={logCollapsed ? '展开日志' : '折叠日志'}>
+                <Button type="text" className="text-gray-300" icon={logCollapsed ? <PanelRightOpen size={18}/> : <PanelRightClose size={18}/>} onClick={toggleLogs}/>
+              </Tooltip>
+            </div>
+            {!logCollapsed && (
+              <div ref={logsRef} onScroll={handleLogScroll} className="min-h-0 flex-1 overflow-auto px-2 py-2 font-mono text-xs leading-5 text-gray-300">
+                {logs.map((item, index) => (
+                  <div
+                    key={`${item.time}-${index}`}
+                    onClick={() => copy(item)}
+                    className="grid cursor-pointer grid-cols-[132px_minmax(0,1fr)] gap-2 px-1 py-0.5 hover:bg-gray-900">
+                    <span className="text-gray-600">{showTime(item.time)}</span>
+                    <span className={`${getTextColor(item.level)} break-words`}>{item.content}</span>
+                  </div>
+                ))}
+                {logs.length === 0 && <div className="py-10 text-center text-gray-600">等待日志输出</div>}
+              </div>
+            )}
+          </aside>
         </div>
       </div>
       <Modal

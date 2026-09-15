@@ -47,6 +47,7 @@ use crate::web::api::task::sync::api_upload_api;
 use crate::web::api::task::test::api_test;
 use crate::web::api::terminal::full::api_full;
 use crate::web::api::terminal::more::api_more;
+use crate::web::api::terminal::stream::api_stream;
 use crate::web::api::user::change_password::api_change_password;
 use crate::web::api::user::change_username::api_change_username;
 use crate::web::api::user::check_token::api_check_token;
@@ -142,6 +143,7 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/user/change-password", post(api_change_password))
         .route("/api/terminal/full", post(api_full))
         .route("/api/terminal/more", post(api_more))
+        .route("/api/terminal/stream", get(api_stream))
         .route("/api/task/status", post(api_status))
         .route("/api/task/test", post(api_test))
         .route("/api/task/combine", post(api_combine))

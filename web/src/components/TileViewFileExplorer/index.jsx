@@ -4,8 +4,9 @@ import './index.css'
 import {fsDeleteRequest, fsSignFileRequest} from "@/api/fs.js";
 import {message} from "antd";
 import {showFileSize, showTime} from "@/utils/tool.js";
+import {FileText, Folder} from "lucide-react";
 
-const Index = ({path, getFileList, items, handlerNextPath}) => {
+const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) => {
 
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({x: 0, y: 0});
@@ -75,21 +76,60 @@ const Index = ({path, getFileList, items, handlerNextPath}) => {
     closeMenu()
   }
 
+  const statusText = (state) => ({
+    keep: '未变化',
+    added: '新增',
+    modified: '已修改',
+    missing: '缺失',
+    gone: '已移除',
+    come: '已恢复'
+  }[state] || state)
+
+  const statusColor = (state) => ({
+    added: 'text-green-600',
+    modified: 'text-amber-600',
+    missing: 'text-red-600',
+    gone: 'text-cyan-600',
+    come: 'text-violet-600'
+  }[state] || 'text-gray-500')
+
   return (
     <>
       {contextHolder}
-      <div className="flex flex-wrap">
-        {
-          items.map((item, index) => (
+      {viewMode === 'grid' ? (
+        <div className="flex flex-wrap content-start">
+          {items.map((item, index) => (
             <div
-              key={index}
+              key={item.name}
               onDoubleClick={() => fsOpenOrDownload(item)}
               onContextMenu={(e) => handleContextMenu(e, index)} onClick={closeMenu}>
               <FileItem item={item}/>
             </div>
-          ))
-        }
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="min-w-[680px] text-sm">
+          <div className="grid h-10 grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-200 px-3 font-medium text-gray-500 dark:border-gray-700">
+            <span>名称</span><span>状态</span><span>大小</span><span>修改时间</span>
+          </div>
+          {items.map((item, index) => (
+            <div
+              key={item.name}
+              className="grid h-11 grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-100 px-3 text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-200 dark:hover:bg-gray-800"
+              onDoubleClick={() => fsOpenOrDownload(item)}
+              onContextMenu={(e) => handleContextMenu(e, index)}
+              onClick={closeMenu}>
+              <div className="flex min-w-0 items-center gap-2">
+                {item.is_directory ? <Folder size={18} className="shrink-0 text-indigo-500"/> : <FileText size={18} className="shrink-0 text-gray-400"/>}
+                <span className="truncate" title={item.name}>{item.name}</span>
+              </div>
+              <span className={statusColor(item.state)}>{statusText(item.state)}</span>
+              <span>{item.is_directory ? '-' : showFileSize(item.size)}</span>
+              <span>{showTime(item.mtime)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {
         isOpen ?

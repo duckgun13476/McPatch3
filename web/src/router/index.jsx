@@ -1,10 +1,8 @@
-import {createBrowserRouter} from "react-router-dom";
+import {createBrowserRouter, Navigate} from "react-router-dom";
 import App from "@/pages/App.jsx";
 import Home from "@/pages/Home/index.jsx";
 import NotFound from "@/pages/NotFound/index.jsx";
 import Dashboard from "@/pages/Dashboard/index.jsx";
-import Overview from "@/pages/Dashboard/Overview/index.jsx";
-import Directory from "@/pages/Dashboard/Directory/index.jsx";
 import Log from "@/pages/Dashboard/Log/index.jsx";
 import Help from "@/pages/Dashboard/Help/index.jsx";
 import Settings from "@/pages/Dashboard/Settings/index.jsx";
@@ -29,15 +27,15 @@ const router = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <Overview/>
+            element: <Log/>
           },
           {
             path: 'directory',
-            element: <Directory/>
+            element: <Navigate to="/dashboard" replace/>
           },
           {
             path: 'log',
-            element: <Log/>
+            element: <Navigate to="/dashboard" replace/>
           },
           {
             path: 'help',

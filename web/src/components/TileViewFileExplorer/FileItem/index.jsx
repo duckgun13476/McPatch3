@@ -1,4 +1,5 @@
 import React from 'react';
+import {FileText, Folder} from "lucide-react";
 
 const Index = ({item}) => {
 
@@ -25,8 +26,8 @@ const Index = ({item}) => {
       <div
         title={item.name}
         className={`w-24 h-24 flex flex-col justify-center items-center cursor-pointer duration-200 select-none ${getBgColor(item)}`}>
-        <div className="max-w-20 text-3xl">
-          {item.is_directory ? '📁' : '📄'}
+        <div className="max-w-20 text-gray-400">
+          {item.is_directory ? <Folder size={31} className="text-indigo-500"/> : <FileText size={31}/>}
         </div>
         <div
           className={`max-w-20 whitespace-nowrap overflow-hidden overflow-ellipsis ${getTextColor(item)}`}>{item.name}</div>

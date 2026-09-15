@@ -1,5 +1,5 @@
 import {Outlet, useLocation, useNavigate} from "react-router-dom";
-import {AppWindow, CircleHelp, CircleUserRound, Folder, LogOut, ScrollText, Settings} from "lucide-react";
+import {AppWindow, CircleHelp, CircleUserRound, LogOut, Settings} from "lucide-react";
 import {userCheckTokenRequest, userSignOutRequest} from "@/api/user.js";
 import {message} from "antd";
 import {useDispatch, useSelector} from "react-redux";
@@ -9,18 +9,8 @@ import {useEffect} from "react";
 const navs = [
   {
     nav: '/dashboard',
-    name: '概览',
+    name: '工作台',
     icon: <AppWindow size={16} strokeWidth={1.5}/>
-  },
-  {
-    nav: '/dashboard/directory',
-    name: '目录',
-    icon: <Folder size={16} strokeWidth={1.5}/>
-  },
-  {
-    nav: '/dashboard/log',
-    name: '日志',
-    icon: <ScrollText size={16} strokeWidth={1.5}/>
   }
 ]
 
