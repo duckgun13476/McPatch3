@@ -6,8 +6,7 @@ import {
   taskRemoveDeleteFileRequest, taskRemoveHashDeletionRequest,
   taskRevertRequest,
   taskTestRequest,
-  taskUploadRequest,
-  taskStatusRequest
+  taskUploadRequest
 } from "@/api/task.js";
 import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
 import {ArrowLeft, FileMinus2, Plus, RotateCcw, Undo2, X} from "lucide-react";
@@ -360,15 +359,6 @@ const Index = () => {
     }
   }
 
-  const taskStatus = async () => {
-    const {code, msg, data} = await taskStatusRequest();
-    if (code === 1) {
-      messageApi.success('任务已提交.')
-    } else {
-      messageApi.error(msg)
-    }
-  }
-
   const copy = async (item) => {
     await navigator.clipboard.writeText(`${showTime(item.time)}-${item.level}-${item.content}`);
     messageApi.success('复制成功!')
@@ -387,11 +377,8 @@ const Index = () => {
       <div className="flex flex-col p-10 min-h-screen">
         <div className="flex justify-start items-center h-8">
           <VersionList versionList={versionList}/>
-          <Popconfirm title="风险操作,请再次确认!" onConfirm={taskStatus} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">检查文件修改</Button>
-          </Popconfirm>
-          <Popconfirm title="风险操作,请再次确认!" onConfirm={taskTest} okText="确定" cancelText="取消">
-            <Button type="primary" size="large" className="ml-2">测试更新包</Button>
+          <Popconfirm title="将回放并校验全部历史更新包，是否继续？" onConfirm={taskTest} okText="确定" cancelText="取消">
+            <Button type="primary" size="large" className="ml-2">校验全部更新包</Button>
           </Popconfirm>
           <Popconfirm title="风险操作,请再次确认!" onConfirm={taskUpload} okText="确定" cancelText="取消">
             <Button type="primary" size="large" className="ml-2">上传public目录</Button>
@@ -445,6 +432,14 @@ const Index = () => {
         width={780}
         okText={packPreview === null ? "查看变化" : "确认并打包"}
         cancelButtonProps={{style: {display: "none"}}}
+        footer={(_, {OkBtn}) => (
+          <div className="flex justify-end gap-2">
+            {packPreview !== null && (
+              <Button icon={<ArrowLeft size={17}/>} onClick={returnToPackEditor}>返回编辑</Button>
+            )}
+            <OkBtn/>
+          </div>
+        )}
         open={packShow}
         confirmLoading={packLoading}
         okButtonProps={{disabled: packPreview !== null && visiblePackChanges.length === 0}}
@@ -494,7 +489,6 @@ const Index = () => {
           <div>
             <div className="mb-3 flex items-center justify-between gap-3 text-sm text-gray-500">
               <div className="flex min-w-0 items-center gap-2">
-                <Button type="text" icon={<ArrowLeft size={17}/>} onClick={returnToPackEditor}>返回编辑</Button>
                 <span className="truncate">共 {packPreview.changes.length} 项，已排除 {excludedChangeIds.length} 项</span>
               </div>
               {excludedChangeIds.length > 0 && (
