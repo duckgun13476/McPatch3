@@ -108,14 +108,14 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
           ))}
         </div>
       ) : (
-        <div className="min-w-[680px] text-sm">
+        <div className="min-w-[680px] select-none text-sm">
           <div className="grid h-10 grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-200 px-3 font-medium text-gray-500 dark:border-gray-700">
             <span>名称</span><span>状态</span><span>大小</span><span>修改时间</span>
           </div>
           {items.map((item, index) => (
             <div
               key={item.name}
-              className="grid h-11 grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-100 px-3 text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-200 dark:hover:bg-gray-800"
+              className="grid h-11 cursor-pointer grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-100 px-3 text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-200 dark:hover:bg-gray-800"
               onDoubleClick={() => fsOpenOrDownload(item)}
               onContextMenu={(e) => handleContextMenu(e, index)}
               onClick={closeMenu}>
