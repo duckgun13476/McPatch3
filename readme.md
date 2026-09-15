@@ -28,3 +28,9 @@ mcpatch pack v7.7.748 --hash-deletions-file hash-deletions.json
 ```
 
 清单格式为 `{"schema":1,"deletions":[{"path":".minecraft/mods/old.jar","sha256":"<64位SHA-256>","len":123}]}`。目标必须是安全的客户端相对路径、当前工作区中不存在，并且不属于既有更新历史；已由历史管理的文件应使用普通工作区删除。
+
+### 更新器自更新
+
+管理员只需替换工作区中的 `.minecraft/autoupdate/AutoUpdateClient.exe`。生成打包预览时，管理端会按该文件的 SHA-256 自动创建不可变的 `AutoUpdateClient-<hash>.exe`，更新 `startlist.txt` 并将启动清单安排在版本化程序之后应用。固定名文件仅作为发布源，不会被更新包原地覆盖到正在运行的玩家更新器。
+
+版本化程序与启动清单属于同一组受保护变更，不能在确认页面中只排除其中一项。旧版本条目会保留在启动清单中作为回退候选；客户端 Loader 仅在新更新器正常退出后清理旧程序。

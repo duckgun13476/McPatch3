@@ -1,5 +1,6 @@
 use std::collections::{HashSet, LinkedList};
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::rc::Weak;
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use crate::core::data::index_file::{IndexFile, VersionIndex};
 use crate::core::data::pending_changes::PendingChanges;
 use crate::core::data::version_meta::{ClientHashDeletion, FileChange, VersionMeta};
 use crate::core::data::version_meta_group::VersionMetaGroup;
-use crate::core::file_hash::calculate_hash;
+use crate::core::file_hash::{calculate_hash, calculate_sha256};
 use crate::core::modrinth::attach_external_sources as attach_modrinth_sources;
 use crate::core::tar_writer::TarWriter;
 use crate::diff::abstract_file::AbstractFile;
@@ -59,6 +60,7 @@ pub struct PackPlan {
     pub pending_deletions: HashSet<String>,
     pub hash_deletions: Vec<ClientHashDeletion>,
     pub pending_hash_deletions: HashSet<String>,
+    required_change_ids: HashSet<String>,
 }
 
 pub struct PackSelection {
@@ -75,13 +77,25 @@ struct OneShotHashDeletionManifest {
     deletions: Vec<ClientHashDeletion>,
 }
 
+const UPDATER_SOURCE_PATH: &str = ".minecraft/autoupdate/AutoUpdateClient.exe";
+const UPDATER_STARTLIST_PATH: &str = ".minecraft/autoupdate/startlist.txt";
+const UPDATER_BASE_NAME: &str = "AutoUpdateClient.exe";
+const UPDATER_VERSION_PREFIX: &str = "AutoUpdateClient-";
+
+struct PreparedUpdaterSelfUpdate {
+    required_paths: HashSet<String>,
+}
+
 pub fn load_one_shot_hash_deletions(path: &Path) -> Result<Vec<ClientHashDeletion>, String> {
     let content = std::fs::read(path)
         .map_err(|error| format!("读取一次性哈希删除清单失败({path:?}): {error}"))?;
     let manifest: OneShotHashDeletionManifest = serde_json::from_slice(&content)
         .map_err(|error| format!("解析一次性哈希删除清单失败({path:?}): {error}"))?;
     if manifest.schema != 1 {
-        return Err(format!("不支持的一次性哈希删除清单版本: {}", manifest.schema));
+        return Err(format!(
+            "不支持的一次性哈希删除清单版本: {}",
+            manifest.schema
+        ));
     }
     if manifest.deletions.is_empty() {
         return Err("一次性哈希删除清单不能为空".to_owned());
@@ -121,6 +135,11 @@ pub fn build_pack_plan(
         return Err(format!("版本号已经存在: {version_label}"));
     }
 
+    // AutoUpdateClient.exe is the administrator-facing source file. Materialize
+    // an immutable sibling before diffing so the running client is never
+    // overwritten in place.
+    let prepared_updater = prepare_updater_self_update(&apppath.workspace_dir)?;
+
     let mut history = HistoryFile::new_dir("workspace_root", Weak::new());
     for (_index, meta) in index_file.read_all_metas(&apppath.public_dir) {
         history.replay_operations(&meta);
@@ -129,6 +148,7 @@ pub fn build_pack_plan(
     let disk_file = DiskFile::new(apppath.workspace_dir.clone(), Weak::new());
     let diff = Diff::diff(&disk_file, &history, Some(&config.core.exclude_rules));
     let mut changes = diff.to_file_changes().into_iter().collect::<Vec<_>>();
+    changes.retain(|change| !change_touches_path(change, UPDATER_SOURCE_PATH));
     let mut explicit_paths = HashSet::new();
     let mut pending_deletions = HashSet::new();
     let mut hash_deletions = Vec::new();
@@ -193,8 +213,16 @@ pub fn build_pack_plan(
         pending_hash_deletions.insert(deletion.path.clone());
     }
 
-    changes.sort_by_key(canonical_change);
+    changes.sort_by_key(change_sort_key);
     changes.dedup_by(|left, right| canonical_change(left) == canonical_change(right));
+
+    let required_change_ids = changes
+        .iter()
+        .filter(|change| {
+            change_path(change).is_some_and(|path| prepared_updater.required_paths.contains(path))
+        })
+        .map(change_id)
+        .collect::<HashSet<_>>();
 
     let mut previews = changes
         .iter()
@@ -221,6 +249,7 @@ pub fn build_pack_plan(
         pending_deletions,
         hash_deletions,
         pending_hash_deletions,
+        required_change_ids,
     })
 }
 
@@ -239,6 +268,13 @@ pub fn select_pack_changes(
         .find(|change_id| !available.contains(change_id.as_str()))
     {
         return Err(format!("待排除的变更不存在或预览已过期: {unknown}"));
+    }
+
+    if excluded_ids
+        .iter()
+        .any(|change_id| plan.required_change_ids.contains(change_id))
+    {
+        return Err("更新器自更新文件与启动清单必须一起发布，不能单独排除".to_owned());
     }
 
     let excluded = excluded_ids.iter().collect::<HashSet<_>>();
@@ -318,12 +354,9 @@ pub fn task_pack(
             ));
             return 1;
         }
-        if let Err(error) = planning_pending.add_hash_deletion(
-            &deletion.path,
-            &deletion.sha256,
-            deletion.len,
-            None,
-        ) {
+        if let Err(error) =
+            planning_pending.add_hash_deletion(&deletion.path, &deletion.sha256, deletion.len, None)
+        {
             console.log_error(error);
             return 1;
         }
@@ -541,6 +574,216 @@ fn change_writes_path(change: &FileChange, expected: &str) -> bool {
     }
 }
 
+fn change_path(change: &FileChange) -> Option<&str> {
+    match change {
+        FileChange::CreateFolder { path }
+        | FileChange::UpdateFile { path, .. }
+        | FileChange::DeleteFolder { path }
+        | FileChange::DeleteFile { path } => Some(path),
+        FileChange::MoveFile { .. } => None,
+    }
+}
+
+fn change_touches_path(change: &FileChange, expected: &str) -> bool {
+    match change {
+        FileChange::CreateFolder { path }
+        | FileChange::UpdateFile { path, .. }
+        | FileChange::DeleteFolder { path }
+        | FileChange::DeleteFile { path } => path.eq_ignore_ascii_case(expected),
+        FileChange::MoveFile { from, to } => {
+            from.eq_ignore_ascii_case(expected) || to.eq_ignore_ascii_case(expected)
+        }
+    }
+}
+
+fn change_sort_key(change: &FileChange) -> (bool, String) {
+    (
+        change_writes_path(change, UPDATER_STARTLIST_PATH),
+        canonical_change(change),
+    )
+}
+
+fn prepare_updater_self_update(workspace_dir: &Path) -> Result<PreparedUpdaterSelfUpdate, String> {
+    let source = workspace_dir.join(UPDATER_SOURCE_PATH);
+    if !source.exists() {
+        return Ok(PreparedUpdaterSelfUpdate {
+            required_paths: HashSet::new(),
+        });
+    }
+
+    let source_metadata = std::fs::symlink_metadata(&source)
+        .map_err(|error| format!("读取更新器源文件失败({source:?}): {error}"))?;
+    if source_metadata.file_type().is_symlink() || !source_metadata.is_file() {
+        return Err(format!(
+            "更新器源必须是普通文件，不能是符号链接或目录: {source:?}"
+        ));
+    }
+
+    let mut source_file = std::fs::File::open(&source)
+        .map_err(|error| format!("打开更新器源文件失败({source:?}): {error}"))?;
+    let source_sha256 = calculate_sha256(&mut source_file);
+    let versioned_name = format!("{UPDATER_VERSION_PREFIX}{}.exe", &source_sha256[..16]);
+    let autoupdate_dir = source
+        .parent()
+        .ok_or_else(|| "更新器源文件缺少父目录".to_owned())?;
+    let versioned = autoupdate_dir.join(&versioned_name);
+    materialize_versioned_updater(&source, &versioned, &source_sha256)?;
+
+    let startlist = workspace_dir.join(UPDATER_STARTLIST_PATH);
+    let mut entries = vec![versioned_name.clone()];
+    if startlist.exists() {
+        let metadata = std::fs::symlink_metadata(&startlist)
+            .map_err(|error| format!("读取更新器启动清单失败({startlist:?}): {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!("更新器启动清单必须是普通文件: {startlist:?}"));
+        }
+        let previous = std::fs::read_to_string(&startlist)
+            .map_err(|error| format!("读取更新器启动清单失败({startlist:?}): {error}"))?;
+        for entry in previous.lines().map(str::trim) {
+            if is_safe_updater_entry(entry)
+                && !entries
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(entry))
+            {
+                entries.push(entry.to_owned());
+            }
+        }
+    }
+    if !entries
+        .iter()
+        .any(|entry| entry.eq_ignore_ascii_case(UPDATER_BASE_NAME))
+    {
+        entries.push(UPDATER_BASE_NAME.to_owned());
+    }
+    let content = format!("{}\n", entries.join("\n"));
+    write_if_changed_atomically(&startlist, content.as_bytes())?;
+
+    Ok(PreparedUpdaterSelfUpdate {
+        required_paths: [
+            format!(".minecraft/autoupdate/{versioned_name}"),
+            UPDATER_STARTLIST_PATH.to_owned(),
+        ]
+        .into_iter()
+        .collect(),
+    })
+}
+
+fn materialize_versioned_updater(
+    source: &Path,
+    target: &Path,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    if target.exists() {
+        let metadata = std::fs::symlink_metadata(target)
+            .map_err(|error| format!("读取版本化更新器失败({target:?}): {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!("版本化更新器目标必须是普通文件: {target:?}"));
+        }
+        let mut existing = std::fs::File::open(target)
+            .map_err(|error| format!("打开版本化更新器失败({target:?}): {error}"))?;
+        if calculate_sha256(&mut existing) == expected_sha256 {
+            return Ok(());
+        }
+        return Err(format!(
+            "版本化更新器名称发生哈希冲突，拒绝覆盖: {target:?}"
+        ));
+    }
+
+    let temporary = temporary_sibling(target);
+    if temporary.exists() {
+        std::fs::remove_file(&temporary)
+            .map_err(|error| format!("清理更新器临时文件失败({temporary:?}): {error}"))?;
+    }
+    let copy_result = (|| {
+        std::fs::copy(source, &temporary)
+            .map_err(|error| format!("生成版本化更新器失败({temporary:?}): {error}"))?;
+        let mut copied = std::fs::File::open(&temporary)
+            .map_err(|error| format!("校验版本化更新器失败({temporary:?}): {error}"))?;
+        if calculate_sha256(&mut copied) != expected_sha256 {
+            return Err("版本化更新器复制后 SHA-256 不一致".to_owned());
+        }
+        std::fs::rename(&temporary, target)
+            .map_err(|error| format!("提交版本化更新器失败({target:?}): {error}"))?;
+        Ok(())
+    })();
+    if copy_result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    copy_result
+}
+
+fn write_if_changed_atomically(path: &Path, content: &[u8]) -> Result<(), String> {
+    if std::fs::read(path).ok().as_deref() == Some(content) {
+        return Ok(());
+    }
+    let temporary = temporary_sibling(path);
+    let backup = backup_sibling(path);
+    if temporary.exists() {
+        std::fs::remove_file(&temporary)
+            .map_err(|error| format!("清理启动清单临时文件失败({temporary:?}): {error}"))?;
+    }
+    if backup.exists() {
+        std::fs::remove_file(&backup)
+            .map_err(|error| format!("清理启动清单旧备份失败({backup:?}): {error}"))?;
+    }
+    let write_result = (|| {
+        let mut output = std::fs::File::create(&temporary)
+            .map_err(|error| format!("创建启动清单临时文件失败({temporary:?}): {error}"))?;
+        output
+            .write_all(content)
+            .and_then(|_| output.sync_all())
+            .map_err(|error| format!("写入启动清单临时文件失败({temporary:?}): {error}"))?;
+        drop(output);
+        if path.exists() {
+            std::fs::rename(path, &backup)
+                .map_err(|error| format!("备份旧启动清单失败({path:?}): {error}"))?;
+        }
+        if let Err(error) = std::fs::rename(&temporary, path) {
+            if backup.exists() {
+                let _ = std::fs::rename(&backup, path);
+            }
+            return Err(format!("提交启动清单失败({path:?}): {error}"));
+        }
+        if backup.exists() {
+            std::fs::remove_file(&backup)
+                .map_err(|error| format!("清理启动清单备份失败({backup:?}): {error}"))?;
+        }
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    write_result
+}
+
+fn backup_sibling(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mcupdate");
+    path.with_file_name(format!(".{name}.{}.bak", std::process::id()))
+}
+
+fn temporary_sibling(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mcupdate");
+    path.with_file_name(format!(".{name}.{}.tmp", std::process::id()))
+}
+
+fn is_safe_updater_entry(entry: &str) -> bool {
+    if entry.eq_ignore_ascii_case(UPDATER_BASE_NAME) {
+        return true;
+    }
+    let Some(version) = entry.strip_prefix(UPDATER_VERSION_PREFIX) else {
+        return false;
+    };
+    version.strip_suffix(".exe").is_some_and(|hash| {
+        (7..=64).contains(&hash.len()) && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
 fn normalize_version_label(version_label: &str) -> Result<String, String> {
     let version_label = version_label.trim();
     if version_label.is_empty() {
@@ -689,12 +932,39 @@ fn canonical_change(change: &FileChange) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        change_id, count_changes, fingerprint, load_one_shot_hash_deletions,
-        normalize_version_label, preview_change,
+        build_pack_plan, change_id, change_sort_key, change_touches_path, count_changes,
+        fingerprint, load_one_shot_hash_deletions, normalize_version_label,
+        prepare_updater_self_update, preview_change, select_pack_changes, task_pack_selected,
+        PackChangeCounts, PackPlan, PackPreview, UPDATER_SOURCE_PATH, UPDATER_STARTLIST_PATH,
     };
+    use crate::app_path::AppPath;
+    use crate::config::Config;
+    use crate::core::data::index_file::IndexFile;
+    use crate::core::data::pending_changes::PendingChanges;
     use crate::core::data::version_meta::{ClientHashDeletion, FileChange};
+    use crate::web::log::Console;
     use std::collections::HashSet;
-    use std::time::SystemTime;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("mcupdate-{name}-{}-{nonce}", std::process::id()))
+    }
+
+    fn update_file(path: &str, hash: &str) -> FileChange {
+        FileChange::UpdateFile {
+            path: path.to_owned(),
+            hash: hash.to_owned(),
+            len: 1,
+            modified: UNIX_EPOCH,
+            offset: 0,
+            external_source: None,
+        }
+    }
 
     #[test]
     fn change_ids_are_stable_and_operation_specific() {
@@ -794,6 +1064,194 @@ mod tests {
         .unwrap();
         assert!(load_one_shot_hash_deletions(&path).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn updater_source_materializes_versioned_binary_and_rollback_list() {
+        let workspace = temp_workspace("updater-self-update");
+        let autoupdate = workspace.join(".minecraft/autoupdate");
+        std::fs::create_dir_all(&autoupdate).unwrap();
+        let source = autoupdate.join("AutoUpdateClient.exe");
+        let startlist = autoupdate.join("startlist.txt");
+        std::fs::write(&source, b"first updater").unwrap();
+        std::fs::write(
+            &startlist,
+            "AutoUpdateClient-aaaaaaaaaaaa.exe\nunsafe.exe\nAutoUpdateClient.exe\n",
+        )
+        .unwrap();
+
+        let first = prepare_updater_self_update(&workspace).unwrap();
+        let first_versioned = first
+            .required_paths
+            .iter()
+            .find(|path| path.ends_with(".exe"))
+            .unwrap()
+            .clone();
+        assert_eq!(
+            std::fs::read(workspace.join(&first_versioned)).unwrap(),
+            b"first updater"
+        );
+        let first_list = std::fs::read_to_string(&startlist).unwrap();
+        assert!(first_list.starts_with(
+            first_versioned
+                .strip_prefix(".minecraft/autoupdate/")
+                .unwrap()
+        ));
+        assert!(first_list.contains("AutoUpdateClient-aaaaaaaaaaaa.exe"));
+        assert!(!first_list.contains("unsafe.exe"));
+        assert!(first_list.ends_with("AutoUpdateClient.exe\n"));
+
+        std::fs::write(&source, b"second updater").unwrap();
+        let second = prepare_updater_self_update(&workspace).unwrap();
+        let second_versioned = second
+            .required_paths
+            .iter()
+            .find(|path| path.ends_with(".exe"))
+            .unwrap();
+        assert_ne!(second_versioned, &first_versioned);
+        let second_list = std::fs::read_to_string(&startlist).unwrap();
+        let entries = second_list.lines().collect::<Vec<_>>();
+        assert_eq!(
+            entries[0],
+            second_versioned
+                .strip_prefix(".minecraft/autoupdate/")
+                .unwrap()
+        );
+        assert_eq!(
+            entries[1],
+            first_versioned
+                .strip_prefix(".minecraft/autoupdate/")
+                .unwrap()
+        );
+        assert_eq!(entries.last(), Some(&"AutoUpdateClient.exe"));
+
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn updater_self_update_changes_cannot_be_partially_excluded() {
+        let binary = update_file(
+            ".minecraft/autoupdate/AutoUpdateClient-aaaaaaaaaaaaaaaa.exe",
+            "binary",
+        );
+        let startlist = update_file(UPDATER_STARTLIST_PATH, "list");
+        let binary_id = change_id(&binary);
+        let previews = vec![
+            preview_change(&binary, &HashSet::new(), false),
+            preview_change(&startlist, &HashSet::new(), false),
+        ];
+        let plan = PackPlan {
+            preview: PackPreview {
+                confirmation_required: true,
+                fingerprint: "fingerprint".to_owned(),
+                changes: previews,
+                counts: PackChangeCounts::default(),
+            },
+            changes: vec![binary, startlist],
+            pending_deletions: HashSet::new(),
+            hash_deletions: Vec::new(),
+            pending_hash_deletions: HashSet::new(),
+            required_change_ids: [binary_id.clone()].into_iter().collect(),
+        };
+
+        let error = select_pack_changes(plan, &[binary_id]).err().unwrap();
+        assert!(error.contains("必须一起发布"));
+    }
+
+    #[test]
+    fn updater_startlist_is_applied_after_other_file_updates() {
+        let mut changes = vec![
+            update_file(UPDATER_STARTLIST_PATH, "list"),
+            update_file(
+                ".minecraft/autoupdate/AutoUpdateClient-aaaaaaaaaaaaaaaa.exe",
+                "binary",
+            ),
+            update_file(".minecraft/mods/example.jar", "mod"),
+        ];
+        changes.sort_by_key(change_sort_key);
+        assert!(matches!(
+            changes.last(),
+            Some(FileChange::UpdateFile { path, .. }) if path == UPDATER_STARTLIST_PATH
+        ));
+    }
+
+    #[test]
+    fn pack_plan_publishes_versioned_updater_without_overwriting_fixed_source() {
+        let working_dir = temp_workspace("updater-pack-plan");
+        let workspace_dir = working_dir.join("workspace");
+        let public_dir = working_dir.join("public");
+        let autoupdate = workspace_dir.join(".minecraft/autoupdate");
+        std::fs::create_dir_all(&autoupdate).unwrap();
+        std::fs::create_dir_all(&public_dir).unwrap();
+        std::fs::write(autoupdate.join("AutoUpdateClient.exe"), b"updater").unwrap();
+        let apppath = AppPath {
+            working_dir: working_dir.clone(),
+            workspace_dir,
+            public_dir: public_dir.clone(),
+            web_dir: working_dir.join("webpage"),
+            index_file: public_dir.join("index.json"),
+            ui_profile_file: public_dir.join("ui-profile.json"),
+            pending_changes_file: working_dir.join("pending-changes.json"),
+            config_file: working_dir.join("config.toml"),
+            auth_file: working_dir.join("user.toml"),
+        };
+
+        let config = Config::default();
+        let plan = build_pack_plan(
+            "v1",
+            "self update",
+            &apppath,
+            &config,
+            &PendingChanges::default(),
+        )
+        .unwrap();
+        assert!(!plan
+            .changes
+            .iter()
+            .any(|change| change_touches_path(change, UPDATER_SOURCE_PATH)));
+        let update_paths = plan
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                FileChange::UpdateFile { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(update_paths.iter().any(|path| {
+            path.starts_with(".minecraft/autoupdate/AutoUpdateClient-") && path.ends_with(".exe")
+        }));
+        assert_eq!(update_paths.last(), Some(&UPDATER_STARTLIST_PATH));
+        assert_eq!(plan.required_change_ids.len(), 2);
+
+        let selection = select_pack_changes(plan, &[]).unwrap();
+        assert_eq!(
+            task_pack_selected(
+                "v1".to_owned(),
+                "self update".to_owned(),
+                selection.changes,
+                selection.hash_deletions,
+                &apppath,
+                &config,
+                &Console::new_cli(),
+            ),
+            0
+        );
+        let index = IndexFile::load_from_file(&apppath.index_file);
+        let metas = index.read_all_metas(&apppath.public_dir);
+        assert_eq!(metas.len(), 1);
+        let packaged_paths = metas[0]
+            .1
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                FileChange::UpdateFile { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(!packaged_paths.contains(&UPDATER_SOURCE_PATH));
+        assert_eq!(packaged_paths.last(), Some(&UPDATER_STARTLIST_PATH));
+
+        std::fs::remove_dir_all(working_dir).unwrap();
     }
 }
 
