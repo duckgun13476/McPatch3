@@ -57,7 +57,7 @@ const Index = () => {
       <div className="w-full h-screen flex flex-col items-center justify-center px-4">
         <div className="max-w-sm w-full text-gray-500 dark:text-white space-y-5">
           <div className="text-center pb-8">
-            <div className="text-4xl font-bold text-indigo-600">McPatch</div>
+            <div className="text-4xl font-bold text-indigo-600">MCUpdate</div>
           </div>
           <form
             onSubmit={login}

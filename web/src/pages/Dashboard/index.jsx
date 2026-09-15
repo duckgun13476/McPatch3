@@ -80,7 +80,7 @@ const Index = () => {
           <div className="flex flex-col h-full">
             <div className='h-20 flex justify-center items-center px-8'>
               <div className='flex-none cursor-pointer' onClick={() => navigate('/')}>
-                <div className="text-3xl font-bold text-indigo-600">McPatch</div>
+                <div className="text-3xl font-bold text-indigo-600">MCUpdate</div>
               </div>
             </div>
             <div className="flex-1 flex flex-col h-full overflow-auto">

@@ -1,4 +1,4 @@
-//! mcpatch2管理端第二版
+//! MCUpdate 管理端，fork 自 McPatch2。
 
 use std::ffi::OsString;
 use std::io::Write;

@@ -23,10 +23,10 @@ const Index = () => {
       <div className="w-screen h-screen flex flex-col justify-center items-center space-y-4">
         <h2
           className="text-transparent bg-clip-text bg-gradient-to-r from-[#4F46E5] to-[#E114E5] text-4xl font-extrabold md:text-5xl">
-          McPatch
+          MCUpdate
         </h2>
         <p className={`max-w-2xl mx-auto text-center dark:text-white`}>
-          McPatch 是一个给 Minecraft 客户端做文件更新的独立应用程序.只要你想,你可以通过这个程序向你服务器的玩家提供一切内容.
+          MCUpdate 是一个面向 Minecraft 客户端的独立文件更新程序。你可以通过它向服务器玩家安全地分发整合包内容。
         </p>
         <button
           onClick={() => checkStatus()}
