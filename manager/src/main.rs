@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Parser;
@@ -13,7 +14,7 @@ use crate::config::Config;
 use crate::core::bootstrap_resolver::resolve_from_stdio;
 use crate::task::check::task_check;
 use crate::task::combine::task_combine;
-use crate::task::pack::task_pack;
+use crate::task::pack::{load_one_shot_hash_deletions, task_pack};
 use crate::task::revert::task_revert;
 use crate::task::test::task_test;
 use crate::web::log::Console;
@@ -40,7 +41,11 @@ enum Commands {
     /// 打包一个新的版本
     Pack {
         /// 指定新的版本号
-        version_label: String
+        version_label: String,
+
+        /// 仅用于本次更新包的精确路径哈希删除清单
+        #[arg(long)]
+        hash_deletions_file: Option<PathBuf>,
     },
 
     /// 检查工作空间的文件修改情况
@@ -123,7 +128,29 @@ async fn interactive_mode(apppath: AppPath, config: Config, console: Console) ->
 
 async fn handle_command(apppath: &AppPath, config: &Config, console: &Console, cmd: CommandLineInterface) -> i32 {
     let result = match cmd.command {
-        Commands::Pack { version_label } => task_pack(version_label, "".to_owned(), apppath, config, console),
+        Commands::Pack {
+            version_label,
+            hash_deletions_file,
+        } => {
+            let hash_deletions = match hash_deletions_file {
+                Some(path) => match load_one_shot_hash_deletions(&path) {
+                    Ok(deletions) => deletions,
+                    Err(error) => {
+                        console.log_error(error);
+                        return 1;
+                    }
+                },
+                None => Vec::new(),
+            };
+            task_pack(
+                version_label,
+                "".to_owned(),
+                hash_deletions,
+                apppath,
+                config,
+                console,
+            )
+        }
         Commands::Check => task_check(apppath, config, console),
         Commands::Combine => task_combine(apppath, config, console),
         Commands::Test => task_test(apppath, config, console),

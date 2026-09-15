@@ -18,3 +18,13 @@ MCUpdate 是由 Pink_Cats 维护的 Minecraft 客户端自动更新管理端，f
 | ----------------------------------- | ------------------------------------ |
 | `cargo dev`                          | 开发场景下，启动管理端程序进行测试           |
 | `cargo ci`                            | 自动构建场景下，打包管理端 |
+
+### 一次性精确哈希删除
+
+自动化发布可以在不修改 `pending-changes.json` 的情况下，将精确路径删除规则仅加入本次更新包：
+
+```text
+mcpatch pack v7.7.748 --hash-deletions-file hash-deletions.json
+```
+
+清单格式为 `{"schema":1,"deletions":[{"path":".minecraft/mods/old.jar","sha256":"<64位SHA-256>","len":123}]}`。目标必须是安全的客户端相对路径、当前工作区中不存在，并且不属于既有更新历史；已由历史管理的文件应使用普通工作区删除。

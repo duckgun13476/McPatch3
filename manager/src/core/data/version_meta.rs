@@ -62,7 +62,8 @@ pub struct ExternalSource {
 
 /// Deletes an obsolete client file only when its path and content both match.
 /// This lives outside `changes` so clients predating the feature safely ignore it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ClientHashDeletion {
     pub path: String,
     pub sha256: String,

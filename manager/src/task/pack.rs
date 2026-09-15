@@ -1,7 +1,8 @@
 use std::collections::{HashSet, LinkedList};
+use std::path::Path;
 use std::rc::Weak;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::app_path::AppPath;
@@ -65,6 +66,45 @@ pub struct PackSelection {
     pub hash_deletions: Vec<ClientHashDeletion>,
     pub emitted_pending_deletions: HashSet<String>,
     pub emitted_pending_hash_deletions: HashSet<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct OneShotHashDeletionManifest {
+    schema: u8,
+    deletions: Vec<ClientHashDeletion>,
+}
+
+pub fn load_one_shot_hash_deletions(path: &Path) -> Result<Vec<ClientHashDeletion>, String> {
+    let content = std::fs::read(path)
+        .map_err(|error| format!("读取一次性哈希删除清单失败({path:?}): {error}"))?;
+    let manifest: OneShotHashDeletionManifest = serde_json::from_slice(&content)
+        .map_err(|error| format!("解析一次性哈希删除清单失败({path:?}): {error}"))?;
+    if manifest.schema != 1 {
+        return Err(format!("不支持的一次性哈希删除清单版本: {}", manifest.schema));
+    }
+    if manifest.deletions.is_empty() {
+        return Err("一次性哈希删除清单不能为空".to_owned());
+    }
+
+    let mut normalized = PendingChanges::default();
+    let mut seen = HashSet::new();
+    for deletion in manifest.deletions {
+        let path_key = deletion.path.replace('\\', "/").to_ascii_lowercase();
+        if !seen.insert(path_key) {
+            return Err(format!("一次性哈希删除清单包含重复路径: {}", deletion.path));
+        }
+        normalized.add_hash_deletion(&deletion.path, &deletion.sha256, deletion.len, None)?;
+    }
+    Ok(normalized
+        .hash_deletions
+        .into_iter()
+        .map(|deletion| ClientHashDeletion {
+            path: deletion.path,
+            sha256: deletion.sha256,
+            len: deletion.len,
+        })
+        .collect())
 }
 
 pub fn build_pack_plan(
@@ -136,6 +176,12 @@ pub fn build_pack_plan(
         if apppath.workspace_dir.join(&deletion.path).exists() {
             return Err(format!(
                 "客户端哈希删除目标仍存在于当前工作区，拒绝打包: {}",
+                deletion.path
+            ));
+        }
+        if history.find(&deletion.path).is_some() {
+            return Err(format!(
+                "客户端哈希删除目标已属于更新历史，应使用普通删除: {}",
                 deletion.path
             ));
         }
@@ -243,6 +289,7 @@ pub fn select_pack_changes(
 pub fn task_pack(
     version_label: String,
     change_logs: String,
+    one_shot_hash_deletions: Vec<ClientHashDeletion>,
     apppath: &AppPath,
     config: &Config,
     console: &Console,
@@ -254,7 +301,40 @@ pub fn task_pack(
             return 1;
         }
     };
-    let plan = match build_pack_plan(&version_label, &change_logs, apppath, config, &pending) {
+    let mut planning_pending = pending.clone();
+    for deletion in one_shot_hash_deletions {
+        if planning_pending
+            .forced_deletions
+            .iter()
+            .any(|entry| entry.path.eq_ignore_ascii_case(&deletion.path))
+            || planning_pending
+                .hash_deletions
+                .iter()
+                .any(|entry| entry.path.eq_ignore_ascii_case(&deletion.path))
+        {
+            console.log_error(format!(
+                "一次性哈希删除与长期待处理规则冲突: {}",
+                deletion.path
+            ));
+            return 1;
+        }
+        if let Err(error) = planning_pending.add_hash_deletion(
+            &deletion.path,
+            &deletion.sha256,
+            deletion.len,
+            None,
+        ) {
+            console.log_error(error);
+            return 1;
+        }
+    }
+    let plan = match build_pack_plan(
+        &version_label,
+        &change_logs,
+        apppath,
+        config,
+        &planning_pending,
+    ) {
         Ok(plan) => plan,
         Err(error) => {
             console.log_error(error);
@@ -268,6 +348,17 @@ pub fn task_pack(
             return 1;
         }
     };
+    let emitted_persistent_hash_deletions = selection
+        .emitted_pending_hash_deletions
+        .iter()
+        .filter(|path| {
+            pending
+                .hash_deletions
+                .iter()
+                .any(|entry| entry.path.eq_ignore_ascii_case(path))
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
     let code = task_pack_selected(
         version_label,
         change_logs,
@@ -279,11 +370,11 @@ pub fn task_pack(
     );
     if code == 0
         && (!selection.emitted_pending_deletions.is_empty()
-            || !selection.emitted_pending_hash_deletions.is_empty())
+            || !emitted_persistent_hash_deletions.is_empty())
     {
         let mut pending = pending;
         pending.mark_emitted(&selection.emitted_pending_deletions);
-        let staged_files = pending.mark_hash_emitted(&selection.emitted_pending_hash_deletions);
+        let staged_files = pending.mark_hash_emitted(&emitted_persistent_hash_deletions);
         if let Err(error) = pending.save(&apppath.pending_changes_file) {
             console.log_warning(format!("更新包已生成，但删除规则状态保存失败: {error}"));
         } else {
@@ -597,7 +688,10 @@ fn canonical_change(change: &FileChange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{change_id, count_changes, fingerprint, normalize_version_label, preview_change};
+    use super::{
+        change_id, count_changes, fingerprint, load_one_shot_hash_deletions,
+        normalize_version_label, preview_change,
+    };
     use crate::core::data::version_meta::{ClientHashDeletion, FileChange};
     use std::collections::HashSet;
     use std::time::SystemTime;
@@ -667,6 +761,39 @@ mod tests {
         assert_eq!(normalize_version_label(" v7.7.448 ").unwrap(), "v7.7.448");
         assert!(normalize_version_label("v7.7. 448").is_err());
         assert!(normalize_version_label("  ").is_err());
+    }
+
+    #[test]
+    fn one_shot_hash_deletion_manifest_is_normalized_and_validated() {
+        let path = std::env::temp_dir().join(format!(
+            "mcupdate-one-shot-hash-delete-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"schema":1,"deletions":[{{"path":".minecraft\\mods\\old.jar","sha256":"{}","len":42}}]}}"#,
+                "A".repeat(64)
+            ),
+        )
+        .unwrap();
+
+        let deletions = load_one_shot_hash_deletions(&path).unwrap();
+        assert_eq!(deletions.len(), 1);
+        assert_eq!(deletions[0].path, ".minecraft/mods/old.jar");
+        assert_eq!(deletions[0].sha256, "a".repeat(64));
+        assert_eq!(deletions[0].len, 42);
+
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"schema":1,"deletions":[{{"path":"../old.jar","sha256":"{}","len":42}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        assert!(load_one_shot_hash_deletions(&path).is_err());
+        std::fs::remove_file(path).unwrap();
     }
 }
 
