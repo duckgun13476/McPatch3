@@ -12,6 +12,7 @@ pub struct ResponseData {
     pub total: u64,
     pub workspace_used: u64,
     pub workspace_files: u64,
+    pub workspace_path: String,
     pub public_used: u64,
     pub public_files: u64,
 }
@@ -76,6 +77,13 @@ pub async fn api_disk_info(State(state): State<WebState>) -> Response {
         }
     }
 
+    let workspace_path = state
+        .apppath
+        .workspace_dir
+        .canonicalize()
+        .unwrap_or_else(|_| state.apppath.workspace_dir.clone())
+        .to_string_lossy()
+        .to_string();
     let workspace_dir = state.apppath.workspace_dir.clone();
     let public_dir = state.apppath.public_dir.clone();
     let ((workspace_used, workspace_files), (public_used, public_files)) =
@@ -94,6 +102,7 @@ pub async fn api_disk_info(State(state): State<WebState>) -> Response {
         dev: usages.2,
         workspace_used,
         workspace_files,
+        workspace_path,
         public_used,
         public_files,
     })

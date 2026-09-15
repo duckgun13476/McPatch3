@@ -1,12 +1,15 @@
 import React from 'react';
+import {Tooltip} from 'antd';
 
-const Index = ({path, handlerBreadcrumb}) => {
+const Index = ({path, handlerBreadcrumb, workspacePath}) => {
 
-  const items = ['workspace', ...path]
+  const items = ['/', ...path]
   return (
     <>
       <div className="h-16 border-l-2 border-teal-600 pr-4 pl-4">
-        <div className="flex h-8 items-center text-base font-bold text-teal-700 dark:text-teal-400">工作目录</div>
+        <Tooltip title={workspacePath || '工作空间根目录'} placement="topLeft">
+          <div className="flex h-8 w-fit cursor-help items-center text-base font-bold text-teal-700 dark:text-teal-400">工作目录</div>
+        </Tooltip>
         <ul className="h-8 flex items-center">
           {
             items.map((item, index) => {

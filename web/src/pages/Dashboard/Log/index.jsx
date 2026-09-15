@@ -71,7 +71,7 @@ const Index = () => {
   const [hashDeletePath, setHashDeletePath] = useState('')
   const [packLoading, setPackLoading] = useState(false)
   const [hashDeleteLoading, setHashDeleteLoading] = useState(false)
-  const [diskInfo, setDiskInfo] = useState({total: 0, used: 0, workspace_used: 0, workspace_files: 0, public_used: 0, public_files: 0})
+  const [diskInfo, setDiskInfo] = useState({total: 0, used: 0, workspace_used: 0, workspace_files: 0, workspace_path: '', public_used: 0, public_files: 0})
   const [path, setPath] = useState(JSON.parse(localStorage.getItem('filePath')) || [])
   const [fileList, setFileList] = useState([])
   const [viewMode, setViewMode] = useState(localStorage.getItem('fileViewMode') || 'grid')
@@ -517,7 +517,7 @@ const Index = () => {
         <div className="mt-4 flex min-h-0 flex-1 gap-4">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden border border-[#dce7e4] bg-white dark:border-[#263532] dark:bg-[#141d1b]">
             <div className="flex items-end justify-between gap-4 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
-              <FileBreadcrumb path={path} handlerBreadcrumb={handlerBreadcrumb}/>
+              <FileBreadcrumb path={path} handlerBreadcrumb={handlerBreadcrumb} workspacePath={diskInfo.workspace_path}/>
               <Segmented
                 className="file-view-switch"
                 value={viewMode}
