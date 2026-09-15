@@ -9,7 +9,9 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class Mcpatch2Loader {
     private static final int UPDATE_BLOCKED_EXIT_CODE = 10;
@@ -51,20 +53,37 @@ public class Mcpatch2Loader {
             throw new RuntimeException("failed to read the file: " + startListPath, e);
         }
 
-        // 获取第一个可用的exe文件路径
-        File exeFile = removeOldAndReturnNewestExeFile(content, startListPath, jarFile);
+        List<File> candidates = executableCandidates(content, startListPath, jarFile);
+        Process process = null;
+        File exeFile = null;
+
+        // A newly downloaded updater may be missing or unusable after an
+        // interrupted update. Try the ordered fallbacks without deleting any
+        // known-good executable first.
+        for (File candidate : candidates) {
+            if (!candidate.isFile())
+                continue;
+
+            try {
+                ProcessBuilder pb = new ProcessBuilder(candidate.getAbsolutePath());
+                pb.redirectErrorStream(true);
+                process = pb.start();
+                exeFile = candidate;
+                break;
+            } catch (IOException e) {
+                System.err.println("failed to start mcpatch candidate " + candidate.getName() + ": " + e.getMessage());
+            }
+        }
+
+        if (process == null || exeFile == null)
+            throw new RuntimeException("no startable updater executable found in: " + startListPath);
 
         System.out.println("mcpatch-executable is " + exeFile.getAbsolutePath());
-
-        // 准备启动进程
-        ProcessBuilder pb = new ProcessBuilder(exeFile.getAbsolutePath());
-        pb.redirectErrorStream(true);
-
-        Process process = pb.start();
+        Process launchedProcess = process;
 
         // 捕获stdout并解码
         new Thread(() -> {
-            InputStreamReader reader = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8);
+            InputStreamReader reader = new InputStreamReader(launchedProcess.getInputStream(), StandardCharsets.UTF_8);
             BufferedReader input = new BufferedReader(reader);
 
             while (true) {
@@ -99,6 +118,11 @@ public class Mcpatch2Loader {
         if (exitCode != 0) {
             throw new RuntimeException("DLL returns " + exitCode + " as exitcode, it's not 0 as expected.");
         }
+
+        // Only retire older updater binaries after the selected executable has
+        // completed successfully. This preserves rollback on launch/update
+        // failure while still cleaning side-by-side self-update artifacts.
+        removeOtherExecutables(candidates, exeFile);
     }
 
     /**
@@ -107,39 +131,52 @@ public class Mcpatch2Loader {
      * @param startListPath 启动列表文件路径
      * @param jarFile 自己Jar文件
      */
-    private static File removeOldAndReturnNewestExeFile(List<String> content, String startListPath, File jarFile) {
+    static List<File> executableCandidates(List<String> content, String startListPath, File jarFile) {
         if (content.isEmpty()) {
             throw new RuntimeException("the file can not be empty: " + startListPath);
         }
 
-        // 寻找第一个存在的文件
-        String exeName = "";
-
-        // 启动列表的第一行是要启动文件，也是最新的文件
-        // 从第二行开始，后面的所有文件都是旧文件，会由加载器本身去删除掉这些文件
-        // 这些文件中可能会包含正在运行的客户端程序本身，而客户端程序本身是无法删除自己的
-        // 因此需要借助加载来删除这些旧文件
+        List<File> candidates = new ArrayList<>();
+        File parent = jarFile.getParentFile();
         for (String line : content) {
             String name = line.trim();
 
             if (name.isEmpty())
                 continue;
 
-            File file = new File(jarFile.getParentFile(), name);
-
-            if (exeName.isEmpty())
-            {
-                exeName = name;
-            } else {
-                if (file.exists())
-                    file.delete();
+            // startlist is an executable rotation list, not a general-purpose
+            // path deletion mechanism. Keep every entry inside Loader.jar's
+            // directory and accept Windows executables only.
+            if (new File(name).isAbsolute()
+                    || name.contains("/")
+                    || name.contains("\\")
+                    || !name.toLowerCase(Locale.ROOT).endsWith(".exe")) {
+                System.err.println("ignored unsafe mcpatch startlist entry: " + name);
+                continue;
             }
+
+            File candidate = new File(parent, name);
+            if (!candidates.contains(candidate))
+                candidates.add(candidate);
         }
 
-        if (exeName.isEmpty())
-            throw new RuntimeException("no startable dll found in start");
+        if (candidates.isEmpty())
+            throw new RuntimeException("no safe updater executable found in: " + startListPath);
 
-        return new File(jarFile.getParentFile(), exeName);
+        return candidates;
+    }
+
+    static void removeOtherExecutables(List<File> candidates, File selected) {
+        for (File candidate : candidates) {
+            if (candidate.equals(selected) || !candidate.exists())
+                continue;
+
+            try {
+                Files.delete(candidate.toPath());
+            } catch (IOException e) {
+                System.err.println("failed to remove old mcpatch executable " + candidate.getName() + ": " + e.getMessage());
+            }
+        }
     }
 
     /**

@@ -33,3 +33,9 @@ tasks.withType<ShadowJar> {
 
     archiveClassifier.set("")
 }
+
+tasks.register<JavaExec>("selfUpdateRegression") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("mcpatch.SelfUpdateRegression")
+}
