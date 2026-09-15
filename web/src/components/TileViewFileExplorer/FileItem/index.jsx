@@ -9,7 +9,7 @@ const Index = ({item}) => {
     if (item.state === 'missing') return 'hover:bg-red-100';
     if (item.state === 'gone') return 'hover:bg-cyan-100';
     if (item.state === 'come') return 'hover:bg-violet-100';
-    return 'hover:bg-gray-200';
+    return 'hover:bg-teal-50 dark:hover:bg-teal-950/30';
   };
 
   const getTextColor = (item) => {
@@ -27,7 +27,7 @@ const Index = ({item}) => {
         title={item.name}
         className={`w-24 h-24 flex flex-col justify-center items-center cursor-pointer duration-200 select-none ${getBgColor(item)}`}>
         <div className="max-w-20 text-gray-400">
-          {item.is_directory ? <Folder size={31} className="text-indigo-500"/> : <FileText size={31}/>}
+          {item.is_directory ? <Folder size={31} className="text-teal-600 dark:text-teal-400"/> : <FileText size={31}/>}
         </div>
         <div
           className={`max-w-20 whitespace-nowrap overflow-hidden overflow-ellipsis ${getTextColor(item)}`}>{item.name}</div>

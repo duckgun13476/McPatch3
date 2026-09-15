@@ -30,7 +30,7 @@ const Index = () => {
         </p>
         <button
           onClick={() => checkStatus()}
-          className="px-6 py-3.5 text-white bg-indigo-600 rounded-full duration-150 hover:bg-indigo-500 active:bg-indigo-700">
+          className="rounded-full bg-teal-700 px-6 py-3.5 text-white duration-150 hover:bg-teal-600 active:bg-teal-800">
           即刻开始!
         </button>
       </div>

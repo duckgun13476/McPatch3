@@ -19,8 +19,16 @@ const App = () => {
   return (
     <>
       <ConfigProvider
-        theme={{token: {colorPrimary: '#4f46e5'}, algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm}}>
-        <div className="dark:bg-gray-950">
+        theme={{
+          token: {
+            colorPrimary: '#0f766e',
+            colorInfo: '#0f766e',
+            colorLink: '#0f766e',
+            borderRadius: 6
+          },
+          algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm
+        }}>
+        <div className="bg-[#f4f7f6] dark:bg-[#101615]">
           <Outlet/>
           <FloatButton
             icon={darkMode ? <Sun className="w-full h-full"/> : <MoonStar className="w-full h-full"/>}

@@ -5,8 +5,8 @@ const Index = ({path, handlerBreadcrumb}) => {
   const items = ['workspace', ...path]
   return (
     <>
-      <div className="h-16 pr-4 pl-4 border-l-2 border-indigo-600">
-        <div className="h-8 flex items-center text-indigo-600 font-bold text-base">工作目录</div>
+      <div className="h-16 border-l-2 border-teal-600 pr-4 pl-4">
+        <div className="flex h-8 items-center text-base font-bold text-teal-700 dark:text-teal-400">工作目录</div>
         <ul className="h-8 flex items-center">
           {
             items.map((item, index) => {

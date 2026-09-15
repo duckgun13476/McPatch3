@@ -57,7 +57,7 @@ const Index = () => {
       <div className="w-full h-screen flex flex-col items-center justify-center px-4">
         <div className="max-w-sm w-full text-gray-500 dark:text-white space-y-5">
           <div className="text-center pb-8">
-            <div className="text-4xl font-bold text-indigo-600">MCUpdate</div>
+            <div className="text-4xl font-bold text-teal-700 dark:text-teal-400">MCUpdate</div>
           </div>
           <form
             onSubmit={login}
@@ -72,7 +72,7 @@ const Index = () => {
                 name="username"
                 type="text"
                 required
-                className="w-full mt-2 px-3 py-2 bg-transparent outline-none border focus:border-indigo-600 shadow-sm rounded-lg"
+                className="mt-2 w-full rounded-md border bg-transparent px-3 py-2 shadow-sm outline-none focus:border-teal-600"
               />
             </div>
             <div>
@@ -83,15 +83,15 @@ const Index = () => {
                 name="password"
                 type="password"
                 required
-                className="w-full mt-2 px-3 py-2 bg-transparent outline-none border focus:border-indigo-600 shadow-sm rounded-lg"
+                className="mt-2 w-full rounded-md border bg-transparent px-3 py-2 shadow-sm outline-none focus:border-teal-600"
               />
             </div>
             <div className="flex items-center justify-between text-sm">
               <a href="#"
-                 className="text-center text-indigo-600 dark:text-indigo-500 hover:text-indigo-500 dark:hover:text-indigo-400">忘记密码?</a>
+                 className="text-center text-teal-700 hover:text-teal-600 dark:text-teal-400 dark:hover:text-teal-300">忘记密码?</a>
             </div>
             <button
-              className="w-full px-4 py-2 text-white font-medium bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-600 rounded-lg duration-150"
+              className="w-full rounded-md bg-teal-700 px-4 py-2 font-medium text-white duration-150 hover:bg-teal-600 active:bg-teal-800"
               type="submit">
               登录
             </button>

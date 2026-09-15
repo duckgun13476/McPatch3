@@ -115,12 +115,12 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
           {items.map((item, index) => (
             <div
               key={item.name}
-              className="grid h-11 cursor-pointer grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-gray-100 px-3 text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-200 dark:hover:bg-gray-800"
+              className="grid h-11 cursor-pointer grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-[#e7efed] px-3 text-gray-700 hover:bg-teal-50/70 dark:border-[#263532] dark:text-gray-200 dark:hover:bg-teal-950/30"
               onDoubleClick={() => fsOpenOrDownload(item)}
               onContextMenu={(e) => handleContextMenu(e, index)}
               onClick={closeMenu}>
               <div className="flex min-w-0 items-center gap-2">
-                {item.is_directory ? <Folder size={18} className="shrink-0 text-indigo-500"/> : <FileText size={18} className="shrink-0 text-gray-400"/>}
+                {item.is_directory ? <Folder size={18} className="shrink-0 text-teal-600 dark:text-teal-400"/> : <FileText size={18} className="shrink-0 text-gray-400"/>}
                 <span className="truncate" title={item.name}>{item.name}</span>
               </div>
               <span className={statusColor(item.state)}>{statusText(item.state)}</span>
@@ -159,7 +159,7 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
                 <>
                   <button
                     onClick={() => fsOpenOrDownload(selectedItem)}
-                    className="flex items-center rounded-md w-full p-2 text-sm text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-800 duration-200">
+                    className="flex w-full items-center rounded-md p-2 text-sm text-teal-700 duration-200 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/30">
                     打开
                   </button>
                 </>
@@ -169,7 +169,7 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
                 <>
                   <button
                     onClick={() => fsOpenOrDownload(selectedItem)}
-                    className="flex items-center rounded-md w-full p-2 text-sm text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-800 duration-200">
+                    className="flex w-full items-center rounded-md p-2 text-sm text-teal-700 duration-200 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/30">
                     下载
                   </button>
                 </>

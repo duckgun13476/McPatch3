@@ -66,11 +66,11 @@ const Index = () => {
       {contextHolder}
       <div className="flex">
         <div
-          className="fixed top-0 left-0 w-full h-full border-r dark:border-gray-900 bg-white dark:bg-gray-950 space-y-8 sm:w-60">
+          className="fixed top-0 left-0 h-full w-full space-y-8 border-r border-[#dce7e4] bg-[#fbfdfc] dark:border-[#263532] dark:bg-[#101615] sm:w-60">
           <div className="flex flex-col h-full">
             <div className='h-20 flex justify-center items-center px-8'>
               <div className='flex-none cursor-pointer' onClick={() => navigate('/')}>
-                <div className="text-3xl font-bold text-indigo-600">MCUpdate</div>
+                <div className="text-3xl font-bold text-teal-700 dark:text-teal-400">MCUpdate</div>
               </div>
             </div>
             <div className="flex-1 flex flex-col h-full overflow-auto">
@@ -81,8 +81,8 @@ const Index = () => {
                     return (
                       <li key={idx}>
                         <div onClick={() => navigate(item.nav)}
-                             className={`flex items-center gap-x-2 text-gray-600 dark:text-white p-2 rounded-lg cursor-pointer ${isActive ? 'bg-gray-100 dark:bg-gray-800' : 'hover:bg-gray-50 dark:hover:bg-gray-900 active:bg-gray-100 dark:active:bg-gray-800 duration-150'}`}>
-                          <div className="text-gray-500 dark:text-white">{item.icon}</div>
+                             className={`flex cursor-pointer items-center gap-x-2 rounded-md p-2 ${isActive ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-200' : 'text-gray-600 hover:bg-[#edf4f2] active:bg-[#e3efec] dark:text-gray-200 dark:hover:bg-[#192321] dark:active:bg-[#21302d]'} duration-150`}>
+                          <div className={isActive ? 'text-teal-700 dark:text-teal-300' : 'text-gray-500 dark:text-gray-300'}>{item.icon}</div>
                           {item.name}
                         </div>
                       </li>
@@ -98,8 +98,8 @@ const Index = () => {
                       return (
                         <li key={idx}>
                           <div onClick={() => navigate(item.nav)}
-                               className={`flex items-center gap-x-2 text-gray-600 dark:text-white p-2 rounded-lg cursor-pointer ${isActive ? 'bg-gray-100 dark:bg-gray-800' : 'hover:bg-gray-50 dark:hover:bg-gray-900 active:bg-gray-100 dark:active:bg-gray-800 duration-150'}`}>
-                            <div className="text-gray-500 dark:text-white">{item.icon}</div>
+                               className={`flex cursor-pointer items-center gap-x-2 rounded-md p-2 ${isActive ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-200' : 'text-gray-600 hover:bg-[#edf4f2] active:bg-[#e3efec] dark:text-gray-200 dark:hover:bg-[#192321] dark:active:bg-[#21302d]'} duration-150`}>
+                            <div className={isActive ? 'text-teal-700 dark:text-teal-300' : 'text-gray-500 dark:text-gray-300'}>{item.icon}</div>
                             {item.name}
                           </div>
                         </li>
@@ -109,7 +109,7 @@ const Index = () => {
                   <li>
                     <div
                       onClick={() => signOut()}
-                      className={`flex items-center gap-x-2 text-gray-600 dark:text-white p-2 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 active:bg-gray-100 dark:active:bg-gray-800 duration-150}`}>
+                      className="flex cursor-pointer items-center gap-x-2 rounded-md p-2 text-gray-600 duration-150 hover:bg-[#edf4f2] active:bg-[#e3efec] dark:text-gray-200 dark:hover:bg-[#192321] dark:active:bg-[#21302d]">
                       <div className="text-gray-500 dark:text-white"><LogOut size={16} strokeWidth={1.5}/></div>
                       退出登录
                     </div>

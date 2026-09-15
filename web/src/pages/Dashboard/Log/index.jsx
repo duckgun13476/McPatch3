@@ -447,7 +447,7 @@ const Index = () => {
   return (
     <>
       {contextHolder}
-      <div className="flex h-screen min-h-[720px] flex-col overflow-hidden p-6">
+      <div className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#f4f7f6] p-6 dark:bg-[#101615]">
         <div className="flex flex-wrap items-center gap-2">
           <VersionList versionList={versionList}/>
           <Popconfirm
@@ -485,7 +485,7 @@ const Index = () => {
           </Popconfirm>
         </div>
 
-        <div className="mt-5 grid grid-cols-4 border-y border-gray-200 py-3 dark:border-gray-800">
+        <div className="mt-5 grid grid-cols-4 border-y border-[#dce7e4] bg-[#fbfdfc] py-3 dark:border-[#263532] dark:bg-[#141d1b]">
           <div className="border-r border-gray-200 px-4 dark:border-gray-800">
             <div className="text-xs text-gray-500">当前版本</div>
             <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">{versionList[0]?.label || '-'}</div>
@@ -507,7 +507,7 @@ const Index = () => {
                 className="min-w-0 flex-1"
                 percent={diskInfo.total > 0 ? Number((diskInfo.used / diskInfo.total * 100).toFixed(1)) : 0}
                 size="small"
-                strokeColor="#4f46e5"
+                strokeColor="#0f766e"
                 trailColor="#e5e7eb"/>
             </div>
             <div className="text-xs text-gray-400">{showFileSize(diskInfo.used)} / {showFileSize(diskInfo.total)}</div>
@@ -515,7 +515,7 @@ const Index = () => {
         </div>
 
         <div className="mt-4 flex min-h-0 flex-1 gap-4">
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden border border-gray-200 dark:border-gray-800">
+          <main className="flex min-w-0 flex-1 flex-col overflow-hidden border border-[#dce7e4] bg-white dark:border-[#263532] dark:bg-[#141d1b]">
             <div className="flex items-end justify-between gap-4 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
               <FileBreadcrumb path={path} handlerBreadcrumb={handlerBreadcrumb}/>
               <Segmented
@@ -530,7 +530,7 @@ const Index = () => {
             <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-800">
               <FolderButtonGroup path={path} getFileList={() => { getFileList(); getDiskInfo() }}/>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-gray-50 dark:bg-gray-900">
+            <div className="min-h-0 flex-1 overflow-auto bg-[#f8fbfa] dark:bg-[#111917]">
               <TileViewFileExplorer
                 path={path}
                 getFileList={() => { getFileList(); getDiskInfo() }}

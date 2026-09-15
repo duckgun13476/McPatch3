@@ -18,10 +18,10 @@ const Index = () => {
   return (
     <>
       <div className="p-10 min-h-screen">
-        <div className="text-2xl font-bold text-indigo-600">磁盘使用量</div>
-        <div className='h-8 mt-2 mb-2 bg-indigo-100 dark:bg-dark-3 relative w-full rounded-2xl'>
+        <div className="text-2xl font-bold text-teal-700 dark:text-teal-400">磁盘使用量</div>
+        <div className='relative mt-2 mb-2 h-8 w-full rounded-2xl bg-teal-100 dark:bg-dark-3'>
           <div
-            className='bg-indigo-600 absolute top-0 left-0 flex h-full items-center justify-center rounded-2xl text-xs font-semibold text-white'
+            className='absolute top-0 left-0 flex h-full items-center justify-center rounded-2xl bg-teal-700 text-xs font-semibold text-white'
             style={{width: `${(diskInfo.used / diskInfo.total * 100).toFixed(2)}%`}}>
           </div>
         </div>
