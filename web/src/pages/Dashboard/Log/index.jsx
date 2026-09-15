@@ -444,7 +444,7 @@ const Index = () => {
         title={packPreview === null ? "打包新版本" : "确认本次文件变化"}
         width={780}
         okText={packPreview === null ? "查看变化" : "确认并打包"}
-        cancelText="取消"
+        cancelButtonProps={{style: {display: "none"}}}
         open={packShow}
         confirmLoading={packLoading}
         okButtonProps={{disabled: packPreview !== null && visiblePackChanges.length === 0}}
