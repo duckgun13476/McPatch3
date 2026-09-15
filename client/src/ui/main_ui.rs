@@ -48,7 +48,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   html, body { width: 100%; height: 100%; overflow: hidden; border-radius: 12px; }
   html { background: transparent; }
   body { margin: 0; color: var(--text); background: transparent; }
-  #windowSurface { position: relative; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--background); }
+  #windowSurface { position: relative; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background-color: var(--background); background-image: var(--background-image, none); background-position: center; background-size: cover; }
   #windowSurface.entering { transform-origin: center; animation: updater-enter 315ms linear both; }
   #windowSurface.exiting { pointer-events: none; transform-origin: center; animation: updater-exit 225ms cubic-bezier(.64, 0, .78, 0) both; }
   @keyframes updater-enter {
@@ -183,7 +183,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('bar').style.width = percent + '%';
     document.getElementById('trafficValue').textContent = traffic;
   };
-  window.updateProfile = ({ headline, subtitle, footer, iconDataUrl, launchLabelOffsetX, theme }) => {
+  window.updateProfile = ({ headline, subtitle, footer, iconDataUrl, backgroundDataUrl, launchLabelOffsetX, theme }) => {
     document.getElementById('headline').textContent = headline;
     document.getElementById('subtitle').textContent = subtitle;
     document.getElementById('footer').textContent = footer;
@@ -198,6 +198,10 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     } else {
       mark.textContent = 'UP';
     }
+    document.documentElement.style.setProperty(
+      '--background-image',
+      backgroundDataUrl ? `url("${backgroundDataUrl}")` : 'none'
+    );
     const themeVariables = {
       accent: '--accent', accentHover: '--accent-hover', accentSoft: '--accent-soft',
       background: '--background', surface: '--surface', logBackground: '--log-background',
@@ -1018,6 +1022,7 @@ impl MainWindow {
             "footer": &profile.footer,
             "launchLabelOffsetX": profile.launch_label_offset_x,
             "iconDataUrl": &profile.icon_data_url,
+            "backgroundDataUrl": &profile.background_data_url,
             "theme": &profile.theme,
         });
         let _ = webview.evaluate_script(&format!("window.updateProfile({profile_payload});"));

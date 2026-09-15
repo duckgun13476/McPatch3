@@ -11,6 +11,8 @@ const CACHE_FILE: &str = "ui-profile-cache.json";
 const MAX_TEXT_BYTES: usize = 240;
 const MAX_ICON_BYTES: usize = 3 * 1024 * 1024;
 const MAX_ICON_DATA_URL_BYTES: usize = 4 * 1024 * 1024;
+const MAX_BACKGROUND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_BACKGROUND_DATA_URL_BYTES: usize = 11 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -22,6 +24,8 @@ pub struct UiProfile {
     pub launch_label_offset_x: i8,
     pub icon: String,
     pub icon_data_url: String,
+    pub background_image: String,
+    pub background_data_url: String,
     pub stages: StageLabels,
     pub theme: ThemeColors,
 }
@@ -88,6 +92,8 @@ impl Default for UiProfile {
             launch_label_offset_x: 2,
             icon: String::new(),
             icon_data_url: data_url(include_bytes!("../app-icon.png")).unwrap_or_default(),
+            background_image: String::new(),
+            background_data_url: String::new(),
             stages: StageLabels::default(),
             theme: ThemeColors::default(),
         }
@@ -115,6 +121,7 @@ pub async fn load_cached(working_dir: &Path) -> Option<UiProfile> {
 }
 
 pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<UiProfile> {
+    let cached = load_cached(working_dir).await.unwrap_or_default();
     let text = network
         .request_text(PROFILE_PATH, 0..0, "updater UI profile")
         .await
@@ -122,6 +129,7 @@ pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<Ui
     let mut profile = validate_profile(serde_json::from_str::<UiProfile>(&text).ok()?)?;
 
     if !profile.icon.is_empty() {
+        profile.icon_data_url = cached.icon_data_url;
         match network
             .request_bytes(&profile.icon, "updater UI icon", MAX_ICON_BYTES)
             .await
@@ -139,6 +147,30 @@ pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<Ui
                     error.reason
                 ));
             }
+        }
+    }
+
+    if !profile.background_image.is_empty() {
+        profile.background_data_url = cached.background_data_url;
+        match network
+            .request_bytes(
+                &profile.background_image,
+                "updater UI background",
+                MAX_BACKGROUND_BYTES,
+            )
+            .await
+        {
+            Ok(background) => match data_url(&background) {
+                Some(encoded) if encoded.len() <= MAX_BACKGROUND_DATA_URL_BYTES => {
+                    profile.background_data_url = encoded;
+                }
+                Some(_) => log_warning("远端更新器背景图编码后超过 11 MiB，继续使用缓存背景图"),
+                None => log_warning("远端更新器背景图格式不受支持，继续使用缓存背景图"),
+            },
+            Err(error) => log_warning(format!(
+                "远端更新器背景图加载失败，继续使用缓存背景图：{}",
+                error.reason
+            )),
         }
     }
 
@@ -185,9 +217,18 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
     if !profile.icon.is_empty() && !safe_asset_path(&profile.icon) {
         return None;
     }
+    if !profile.background_image.is_empty() && !safe_asset_path(&profile.background_image) {
+        return None;
+    }
     if !profile.icon_data_url.is_empty()
         && (!profile.icon_data_url.starts_with("data:image/")
             || profile.icon_data_url.len() > MAX_ICON_DATA_URL_BYTES)
+    {
+        return None;
+    }
+    if !profile.background_data_url.is_empty()
+        && (!profile.background_data_url.starts_with("data:image/")
+            || profile.background_data_url.len() > MAX_BACKGROUND_DATA_URL_BYTES)
     {
         return None;
     }
@@ -243,6 +284,10 @@ mod tests {
         assert!(safe_asset_path("assets/updater.png"));
         assert!(!safe_asset_path("../updater.png"));
         assert!(!safe_asset_path("https://example.invalid/icon.png"));
+
+        let mut profile = UiProfile::default();
+        profile.background_image = "../background.png".to_owned();
+        assert!(validate_profile(profile).is_none());
     }
 
     #[test]
