@@ -177,7 +177,7 @@ const Index = () => {
               <div>
                 <div className="mb-3 text-sm font-semibold">配色</div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {themeFields.map(([key, label]) => <label key={key} className="flex items-center justify-between gap-2 text-xs text-[#536965]"><span>{label}</span><ColorPicker size="small" value={theme[key]} onChange={(_, hex) => updateTheme(key, hex)}/></label>)}
+                  {themeFields.map(([key, label]) => <label key={key} className="flex items-center justify-between gap-2 text-xs text-[#536965]"><span>{label}</span><ColorPicker disabledAlpha size="small" value={theme[key]} onChange={color => updateTheme(key, color.toHexString())}/></label>)}
                 </div>
               </div>
             </section>
