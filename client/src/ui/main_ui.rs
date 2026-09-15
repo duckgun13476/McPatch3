@@ -116,17 +116,17 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .dialog-action.primary:hover { background: var(--accent-hover); }
   .dialog-action:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
   .foot { margin-top: auto; color: var(--muted); font-size: 12px; text-align: center; }
-  .foot:not(.complete) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 38.2%); gap: 16px; align-items: center; }
+  .foot:not(.complete) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 44%); gap: 16px; align-items: center; }
   .foot:not(.complete) #footer { text-align: left; }
   .foot.complete { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr); gap: 14px; align-items: center; }
   .foot.complete #footer { display: none; }
   #footerActions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
   .foot.complete #footerActions { display: flex; justify-content: flex-end; }
-  .traffic-stat { width: clamp(220px, 38.2%, 330px); min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 10px; padding: 3px 16px; border-left: 2px solid var(--accent-soft); text-align: left; }
+  .traffic-stat { width: 100%; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 10px; padding: 3px 16px; border-left: 2px solid var(--accent-soft); text-align: left; }
   .traffic-symbol { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); font-size: 20px; font-weight: 800; line-height: 1; }
-  .traffic-copy { min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .traffic-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
   .traffic-label { flex: 0 0 auto; color: var(--muted); font-size: 12px; font-weight: 700; }
-  #trafficValue { min-width: 0; color: var(--text); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #trafficValue { min-width: 0; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   #completeButton { display: none; width: 100%; height: 52px; padding: 0 9px; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; border: 0; border-radius: 26px; background: var(--accent); color: #fff; font: 700 15px "Microsoft YaHei UI", "Segoe UI", sans-serif; cursor: pointer; }
   .foot.complete #completeButton { display: grid; }
   #completeButton::after { content: ""; width: 34px; height: 34px; }
