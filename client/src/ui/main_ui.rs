@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::num::NonZeroIsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nwd::NwgUi;
 use nwg::NativeUi;
@@ -116,9 +116,11 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .dialog-action.primary:hover { background: var(--accent-hover); }
   .dialog-action:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
   .foot { margin-top: auto; color: var(--muted); font-size: 12px; text-align: center; }
+  .foot:not(.complete) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 38.2%); gap: 16px; align-items: center; }
+  .foot:not(.complete) #footer { text-align: left; }
   .foot.complete { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr); gap: 14px; align-items: center; }
   .foot.complete #footer { display: none; }
-  #footerActions { display: none; min-width: 0; align-items: center; gap: 10px; }
+  #footerActions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
   .foot.complete #footerActions { display: flex; justify-content: flex-end; }
   .traffic-stat { width: clamp(220px, 38.2%, 330px); min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 10px; padding: 3px 16px; border-left: 2px solid var(--accent-soft); text-align: left; }
   .traffic-symbol { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); font-size: 20px; font-weight: 800; line-height: 1; }
@@ -421,6 +423,8 @@ pub struct MainWindow {
     detail: RefCell<String>,
     progress_value: RefCell<u32>,
     transfer: RefCell<(u64, u64)>,
+    transfer_speed: RefCell<u64>,
+    transfer_sample: RefCell<(u64, Instant)>,
     pending_changelog: RefCell<Option<ChangelogView>>,
     entry_animation_played: RefCell<bool>,
     close_animation_started: Arc<AtomicBool>,
@@ -463,6 +467,8 @@ impl MainWindow {
             detail: RefCell::new("正在连接更新服务".to_owned()),
             progress_value: RefCell::new(0),
             transfer: RefCell::new((0, 0)),
+            transfer_speed: RefCell::new(0),
+            transfer_sample: RefCell::new((0, Instant::now())),
             pending_changelog: RefCell::new(None),
             entry_animation_played: RefCell::new(false),
             close_animation_started,
@@ -632,6 +638,7 @@ impl MainWindow {
                     );
                 }
                 Command::SetTransfer { downloaded, total } => {
+                    self.sample_transfer_speed(downloaded);
                     *self.transfer.borrow_mut() = (downloaded, total);
                     let status = self.status.borrow();
                     let detail = self.detail.borrow();
@@ -997,7 +1004,10 @@ impl MainWindow {
             "status": status,
             "detail": detail,
             "progress": progress,
-            "traffic": Self::format_transfer(*self.transfer.borrow()),
+            "traffic": Self::format_transfer(
+                *self.transfer.borrow(),
+                *self.transfer_speed.borrow(),
+            ),
         });
         let _ = webview.evaluate_script(&format!("window.updateUi({payload});"));
 
@@ -1046,16 +1056,31 @@ impl MainWindow {
         }
     }
 
-    fn format_transfer((downloaded, total): (u64, u64)) -> String {
+    fn sample_transfer_speed(&self, downloaded: u64) {
+        let now = Instant::now();
+        let mut sample = self.transfer_sample.borrow_mut();
+        let elapsed = now.duration_since(sample.1);
+        if downloaded < sample.0 || downloaded == 0 {
+            *self.transfer_speed.borrow_mut() = 0;
+            *sample = (downloaded, now);
+        } else if elapsed >= Duration::from_millis(100) {
+            let bytes = downloaded - sample.0;
+            *self.transfer_speed.borrow_mut() = (bytes as f64 / elapsed.as_secs_f64()) as u64;
+            *sample = (downloaded, now);
+        }
+    }
+
+    fn format_transfer((downloaded, total): (u64, u64), speed: u64) -> String {
         if total == 0 {
             "无需下载".to_owned()
         } else if downloaded >= total {
             format!("{}", crate::utility::convert_bytes(downloaded))
         } else {
             format!(
-                "{} / {}",
+                "{} / {} · {}/s",
                 crate::utility::convert_bytes(downloaded),
-                crate::utility::convert_bytes(total)
+                crate::utility::convert_bytes(total),
+                crate::utility::convert_bytes(speed),
             )
         }
     }
@@ -1255,9 +1280,12 @@ mod tests {
 
     #[test]
     fn formats_download_traffic_for_footer() {
-        assert_eq!(MainWindow::format_transfer((0, 0)), "无需下载");
-        assert_eq!(MainWindow::format_transfer((1024, 2048)), "1.0 KB / 2.0 KB");
-        assert_eq!(MainWindow::format_transfer((2048, 2048)), "2.0 KB");
+        assert_eq!(MainWindow::format_transfer((0, 0), 0), "无需下载");
+        assert_eq!(
+            MainWindow::format_transfer((1024, 2048), 512),
+            "1.0 KB / 2.0 KB · 512 B/s"
+        );
+        assert_eq!(MainWindow::format_transfer((2048, 2048), 512), "2.0 KB");
     }
 
     #[test]

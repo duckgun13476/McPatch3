@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use futures::{stream, StreamExt, TryStreamExt};
@@ -145,6 +146,8 @@ pub async fn initialize(
     )
     .await;
 
+    let live_downloaded = Arc::new(AtomicU64::new(completed_bytes));
+
     #[cfg(target_os = "windows")]
     {
         ui_cmd
@@ -163,11 +166,20 @@ pub async fn initialize(
     let mut downloads = stream::iter(pending.into_iter().enumerate().map(
         |(queue_index, (index, file, target, temp_path))| {
             let permits = Arc::clone(&permits);
+            let live_downloaded = Arc::clone(&live_downloaded);
             let remaining_files = pending_count - queue_index;
             let max_segments =
                 (DOWNLOAD_CONCURRENCY / remaining_files.min(DOWNLOAD_CONCURRENCY)).max(1);
             async move {
-                download_verified(network, &file, &temp_path, &permits, max_segments).await?;
+                download_verified(
+                    network,
+                    &file,
+                    &temp_path,
+                    &permits,
+                    max_segments,
+                    &live_downloaded,
+                )
+                .await?;
                 install_verified_file(&temp_path, &target).await?;
                 let name = target
                     .file_name()
@@ -180,28 +192,42 @@ pub async fn initialize(
     ))
     .buffer_unordered(DOWNLOAD_CONCURRENCY);
 
-    while let Some(result) = downloads.next().await {
-        let (_index, downloaded, name) = result?;
-        completed_bytes += downloaded;
-        completed_files += 1;
-        update_progress(
-            completed_bytes,
-            total_bytes,
-            #[cfg(target_os = "windows")]
-            ui_cmd,
-        )
-        .await;
-        #[cfg(target_os = "windows")]
-        {
-            ui_cmd
-                .set_label(format!(
-                    "正在初始化整合包 ({completed_files}/{})",
-                    manifest.files.len()
-                ))
+    let mut progress_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    loop {
+        tokio::select! {
+            result = downloads.next() => {
+                let Some(result) = result else { break };
+                let (_index, _downloaded, name) = result?;
+                completed_files += 1;
+                #[cfg(target_os = "windows")]
+                {
+                    ui_cmd
+                        .set_label(format!(
+                            "正在初始化整合包 ({completed_files}/{})",
+                            manifest.files.len()
+                        ))
+                        .await;
+                    ui_cmd.set_label_secondary(name).await;
+                }
+            }
+            _ = progress_tick.tick() => {
+                update_progress(
+                    live_downloaded.load(Ordering::Relaxed),
+                    total_bytes,
+                    #[cfg(target_os = "windows")]
+                    ui_cmd,
+                )
                 .await;
-            ui_cmd.set_label_secondary(name).await;
+            }
         }
     }
+    update_progress(
+        live_downloaded.load(Ordering::Relaxed),
+        total_bytes,
+        #[cfg(target_os = "windows")]
+        ui_cmd,
+    )
+    .await;
 
     write_state(&state_path, &manifest_hash).await?;
     if let Err(error) = tokio::fs::remove_dir_all(&temp_root).await {
@@ -353,12 +379,22 @@ async fn download_verified(
     temp_path: &Path,
     permits: &Arc<Semaphore>,
     max_segments: usize,
+    live_downloaded: &Arc<AtomicU64>,
 ) -> BusinessResult<()> {
     let mut failures = Vec::new();
     for source in file.sources() {
         let mut last_error = String::from("没有发起下载");
         for attempt in 1..=DOWNLOAD_ATTEMPTS {
-            match download_segmented(network, file, source, temp_path, permits, max_segments).await
+            match download_segmented(
+                network,
+                file,
+                source,
+                temp_path,
+                permits,
+                max_segments,
+                live_downloaded,
+            )
+            .await
             {
                 Ok(segments)
                     if sha256_file(temp_path)
@@ -372,6 +408,7 @@ async fn download_verified(
                     return Ok(());
                 }
                 Ok(_) => {
+                    live_downloaded.fetch_sub(file.length, Ordering::Relaxed);
                     last_error =
                         format!("CDN 文件 SHA-256 校验失败（第 {attempt}/{DOWNLOAD_ATTEMPTS} 次）")
                 }
@@ -398,6 +435,7 @@ async fn download_segmented(
     temp_path: &Path,
     permits: &Arc<Semaphore>,
     max_segments: usize,
+    live_downloaded: &Arc<AtomicU64>,
 ) -> BusinessResult<usize> {
     let segment_count = segment_count(file.length, max_segments);
     let segment_size = file.length.div_ceil(segment_count as u64);
@@ -415,11 +453,12 @@ async fn download_segmented(
         })
         .collect::<Vec<_>>();
 
-    stream::iter(
-        parts
-            .iter()
-            .cloned()
-            .map(|(index, range, part_path)| async move {
+    let attempt_downloaded = Arc::new(AtomicU64::new(0));
+    let download_result =
+        stream::iter(parts.iter().cloned().map(|(index, range, part_path)| {
+            let live_downloaded = Arc::clone(live_downloaded);
+            let attempt_downloaded = Arc::clone(&attempt_downloaded);
+            async move {
                 let _permit = permits
                     .acquire()
                     .await
@@ -447,9 +486,22 @@ async fn download_segmented(
                 let mut output = tokio::fs::File::create(&part_path)
                     .await
                     .be(|error| format!("创建初始化分片失败({part_path:?})，原因：{error:?}"))?;
-                let copied = tokio::io::copy(&mut input, &mut output)
-                    .await
-                    .be(|error| format!("写入初始化分片失败({part_path:?})，原因：{error:?}"))?;
+                let mut copied = 0_u64;
+                let mut buffer = [0_u8; 64 * 1024];
+                loop {
+                    let read = input.read(&mut buffer).await.be(|error| {
+                        format!("读取初始化分片失败({part_path:?})，原因：{error:?}")
+                    })?;
+                    if read == 0 {
+                        break;
+                    }
+                    output.write_all(&buffer[..read]).await.be(|error| {
+                        format!("写入初始化分片失败({part_path:?})，原因：{error:?}")
+                    })?;
+                    copied += read as u64;
+                    live_downloaded.fetch_add(read as u64, Ordering::Relaxed);
+                    attempt_downloaded.fetch_add(read as u64, Ordering::Relaxed);
+                }
                 output
                     .flush()
                     .await
@@ -461,11 +513,18 @@ async fn download_segmented(
                     )));
                 }
                 Ok::<_, BusinessError>(())
-            }),
-    )
-    .buffer_unordered(segment_count)
-    .try_collect::<Vec<_>>()
-    .await?;
+            }
+        }))
+        .buffer_unordered(segment_count)
+        .try_collect::<Vec<_>>()
+        .await;
+    if let Err(error) = download_result {
+        live_downloaded.fetch_sub(
+            attempt_downloaded.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        return Err(error);
+    }
 
     let mut output = tokio::fs::File::create(temp_path)
         .await
