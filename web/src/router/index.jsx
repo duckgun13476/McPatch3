@@ -7,6 +7,7 @@ import Log from "@/pages/Dashboard/Log/index.jsx";
 import Help from "@/pages/Dashboard/Help/index.jsx";
 import Settings from "@/pages/Dashboard/Settings/index.jsx";
 import Login from "@/pages/Login/index.jsx";
+import Personalization from "@/pages/Dashboard/Personalization/index.jsx";
 
 const router = createBrowserRouter([
   {
@@ -44,6 +45,10 @@ const router = createBrowserRouter([
           {
             path: 'settings',
             element: <Settings/>
+          },
+          {
+            path: 'personalization',
+            element: <Personalization/>
           }
         ]
       },

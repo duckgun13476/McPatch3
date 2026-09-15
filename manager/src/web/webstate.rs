@@ -20,6 +20,7 @@ pub struct WebState {
     pub te: Arc<Mutex<LongTimeExecutor>>,
     pub status: Arc<Mutex<FileStatus>>,
     pub pending_changes: Arc<Mutex<PendingChanges>>,
+    pub ui_profile: Arc<Mutex<()>>,
 }
 
 impl WebState {
@@ -35,6 +36,7 @@ impl WebState {
             te: Arc::new(Mutex::new(LongTimeExecutor::new())),
             status: Arc::new(Mutex::new(FileStatus::new(app_path, config))),
             pending_changes: Arc::new(Mutex::new(pending_changes)),
+            ui_profile: Arc::new(Mutex::new(())),
         }
     }
 }

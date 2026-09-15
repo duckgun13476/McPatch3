@@ -9,6 +9,7 @@ pub mod terminal;
 pub mod public;
 pub mod webpage;
 pub mod misc;
+pub mod personalization;
 
 /// 公共响应体
 #[derive(Serialize)]

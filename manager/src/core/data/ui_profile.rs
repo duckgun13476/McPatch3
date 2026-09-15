@@ -1,37 +1,198 @@
 use std::path::Path;
 
-const DEFAULT_UI_PROFILE: &str = r##"{
-  "schema": 1,
-  "headline": "自动更新器",
-  "subtitle": "安全检查并应用客户端更新",
-  "footer": "请保持此窗口开启，完成后将自动启动客户端。",
-  "launchLabelOffsetX": 2,
-  "icon": "",
-  "stages": {
-    "prepare": "正在准备",
-    "checking": "正在检查",
-    "downloading": "正在下载",
-    "applying": "正在应用",
-    "completed": "更新完成"
-  },
-  "theme": {
-    "accent": "#147d67",
-    "accentHover": "#106b59",
-    "accentSoft": "#dff2eb",
-    "background": "#f4f7f6",
-    "surface": "#ffffff",
-    "logBackground": "#f7faf9",
-    "text": "#16332d",
-    "muted": "#648078",
-    "border": "#e2ebe8"
-  }
-}
-"##;
+use serde::{Deserialize, Serialize};
 
-/// 初始化一次可编辑的客户端界面资料。存在时绝不覆盖管理员配置。
+pub const ICON_ASSET_PATH: &str = "assets/updater.png";
+pub const BACKGROUND_ASSET_PATH: &str = "assets/updater-background.png";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UiProfile {
+    pub schema: u8,
+    pub headline: String,
+    pub subtitle: String,
+    pub footer: String,
+    pub launch_label_offset_x: i8,
+    pub icon: String,
+    pub background_image: String,
+    pub stages: StageLabels,
+    pub theme: ThemeColors,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct StageLabels {
+    pub prepare: String,
+    pub checking: String,
+    pub downloading: String,
+    pub applying: String,
+    pub completed: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ThemeColors {
+    pub accent: String,
+    pub accent_hover: String,
+    pub accent_soft: String,
+    pub background: String,
+    pub surface: String,
+    pub log_background: String,
+    pub text: String,
+    pub muted: String,
+    pub border: String,
+}
+
+impl Default for StageLabels {
+    fn default() -> Self {
+        Self {
+            prepare: "正在准备".to_owned(),
+            checking: "正在检查".to_owned(),
+            downloading: "正在下载".to_owned(),
+            applying: "正在应用".to_owned(),
+            completed: "更新完成".to_owned(),
+        }
+    }
+}
+
+impl Default for ThemeColors {
+    fn default() -> Self {
+        Self {
+            accent: "#147d67".to_owned(),
+            accent_hover: "#106b59".to_owned(),
+            accent_soft: "#dff2eb".to_owned(),
+            background: "#f4f7f6".to_owned(),
+            surface: "#ffffff".to_owned(),
+            log_background: "#f7faf9".to_owned(),
+            text: "#16332d".to_owned(),
+            muted: "#648078".to_owned(),
+            border: "#e2ebe8".to_owned(),
+        }
+    }
+}
+
+impl Default for UiProfile {
+    fn default() -> Self {
+        Self {
+            schema: 1,
+            headline: "自动更新器".to_owned(),
+            subtitle: "安全检查并应用客户端更新".to_owned(),
+            footer: "请保持此窗口开启，完成后将自动启动客户端。".to_owned(),
+            launch_label_offset_x: 2,
+            icon: String::new(),
+            background_image: String::new(),
+            stages: StageLabels::default(),
+            theme: ThemeColors::default(),
+        }
+    }
+}
+
+impl UiProfile {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("读取个性化配置失败：{error}"))?;
+        let profile = serde_json::from_str::<Self>(&text)
+            .map_err(|error| format!("个性化配置格式错误：{error}"))?;
+        profile.validate()
+    }
+
+    pub fn validate(mut self) -> Result<Self, String> {
+        if self.schema != 1 {
+            return Err("不支持的个性化配置版本".to_owned());
+        }
+        for value in [&self.headline, &self.subtitle, &self.footer] {
+            if !valid_text(value) {
+                return Err("显示文字不能为空、换行或超过 240 字节".to_owned());
+            }
+        }
+        for value in [
+            &self.stages.prepare,
+            &self.stages.checking,
+            &self.stages.downloading,
+            &self.stages.applying,
+            &self.stages.completed,
+        ] {
+            if !valid_text(value) {
+                return Err("阶段文字不能为空、换行或超过 240 字节".to_owned());
+            }
+        }
+        for color in [
+            &self.theme.accent,
+            &self.theme.accent_hover,
+            &self.theme.accent_soft,
+            &self.theme.background,
+            &self.theme.surface,
+            &self.theme.log_background,
+            &self.theme.text,
+            &self.theme.muted,
+            &self.theme.border,
+        ] {
+            if !valid_color(color) {
+                return Err("颜色必须使用 #RRGGBB 格式".to_owned());
+            }
+        }
+        if !valid_managed_asset(&self.icon, ICON_ASSET_PATH)
+            || !valid_managed_asset(&self.background_image, BACKGROUND_ASSET_PATH)
+        {
+            return Err("图片路径不属于个性化资源目录".to_owned());
+        }
+        self.launch_label_offset_x = self.launch_label_offset_x.clamp(-24, 24);
+        Ok(self)
+    }
+}
+
 pub fn ensure_ui_profile(path: &Path) -> std::io::Result<()> {
     if !path.exists() {
-        std::fs::write(path, DEFAULT_UI_PROFILE)?;
+        let data = serde_json::to_vec_pretty(&UiProfile::default())?;
+        std::fs::write(path, data)?;
     }
     Ok(())
+}
+
+fn valid_text(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 240 && !value.contains(['\r', '\n'])
+}
+
+fn valid_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn valid_managed_asset(value: &str, expected: &str) -> bool {
+    value.is_empty() || value == expected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_old_profile_without_background() {
+        let profile: UiProfile = serde_json::from_str(
+            r##"{"schema":1,"headline":"A","subtitle":"B","footer":"C","icon":"assets/updater.png","theme":{"accent":"#147d67"}}"##,
+        )
+        .unwrap();
+        let profile = profile.validate().unwrap();
+        assert!(profile.background_image.is_empty());
+        assert_eq!(profile.icon, ICON_ASSET_PATH);
+    }
+
+    #[test]
+    fn rejects_unmanaged_asset_paths() {
+        let mut profile = UiProfile::default();
+        profile.background_image = "../secret.png".to_owned();
+        assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn validates_colors_and_clamps_offset() {
+        let mut profile = UiProfile::default();
+        profile.launch_label_offset_x = 100;
+        assert_eq!(profile.validate().unwrap().launch_label_offset_x, 24);
+
+        let mut profile = UiProfile::default();
+        profile.theme.accent = "red".to_owned();
+        assert!(profile.validate().is_err());
+    }
 }

@@ -1,5 +1,5 @@
 import {Outlet, useLocation, useNavigate} from "react-router-dom";
-import {AppWindow, CircleHelp, CircleUserRound, LogOut, Settings} from "lucide-react";
+import {AppWindow, CircleHelp, CircleUserRound, LogOut, Palette, Settings} from "lucide-react";
 import {userCheckTokenRequest, userSignOutRequest} from "@/api/user.js";
 import {message} from "antd";
 import {useDispatch, useSelector} from "react-redux";
@@ -11,6 +11,11 @@ const navs = [
     nav: '/dashboard',
     name: '工作台',
     icon: <AppWindow size={16} strokeWidth={1.5}/>
+  },
+  {
+    nav: '/dashboard/personalization',
+    name: '个性化',
+    icon: <Palette size={16} strokeWidth={1.5}/>
   }
 ]
 
