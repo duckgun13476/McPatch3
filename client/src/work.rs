@@ -661,6 +661,12 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
             base_dir.join(&e.from) == log_file_path || base_dir.join(&e.to) == log_file_path
         });
 
+        // Publish the updater executable before switching Loader's selection
+        // list. Older Loader versions trust the first startlist entry without
+        // checking that it exists, so applying this file last keeps an
+        // interrupted self-update on the previous known-good executable.
+        update_files.sort_by_key(|update| is_updater_startlist(&update.path));
+
         for mf in &move_files {
             println!("move files: {} => {}", mf.from, mf.to);
         }
@@ -1282,12 +1288,35 @@ async fn get_working_dir(_params: &StartupParameter) -> BusinessResult<PathBuf> 
     Ok(working_dir)
 }
 
+fn is_updater_startlist(path: &str) -> bool {
+    let mut components = path
+        .split(|character| character == '/' || character == '\\')
+        .filter(|component| !component.is_empty())
+        .rev();
+    components
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("startlist.txt"))
+        && components
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("autoupdate"))
+}
+
 #[cfg(test)]
 mod hash_deletion_tests {
-    use super::delete_matching_client_file;
+    use super::{delete_matching_client_file, is_updater_startlist};
     use crate::data::version_meta::ClientHashDeletion;
     use sha2::{Digest, Sha256};
     use std::collections::HashSet;
+
+    #[test]
+    fn recognizes_only_the_updater_startlist_switch_file() {
+        assert!(is_updater_startlist(".minecraft/autoupdate/startlist.txt"));
+        assert!(is_updater_startlist(
+            ".minecraft\\autoupdate\\STARTLIST.TXT"
+        ));
+        assert!(!is_updater_startlist("startlist.txt"));
+        assert!(!is_updater_startlist("config/startlist.txt"));
+    }
 
     #[tokio::test]
     async fn deletes_only_the_exact_unprotected_path_and_hash() {
