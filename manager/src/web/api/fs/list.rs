@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::file_status::SingleFileStatus;
 use crate::web::webstate::WebState;
 
@@ -35,7 +36,10 @@ pub struct File {
 pub async fn api_list(State(state): State<WebState>, Json(payload): Json<RequestBody>) -> Response {
     let mut status = state.status.lock().await;
 
-    let dir = state.apppath.working_dir.join(&payload.path);
+    let dir = match workspace_path(&state.apppath, &payload.path, true) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<ResponseData>::err(&err),
+    };
 
     // println!("list: {:?}", dir);
 
@@ -52,7 +56,7 @@ pub async fn api_list(State(state): State<WebState>, Json(payload): Json<Request
         let metadata = entry.metadata().await.unwrap();
 
         let status = match entry.path().strip_prefix(&state.apppath.workspace_dir) {
-            Ok(ok) => status.get_file_status(&ok.to_str().unwrap().replace("\\", "/")).await,
+            Ok(ok) => status.get_file_status(&ok.to_string_lossy().replace("\\", "/")).await,
             Err(_) => SingleFileStatus::Keep,
         };
 

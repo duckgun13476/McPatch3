@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Button, Dropdown, Input, message, Modal, Popconfirm, Popover, Segmented, Tag, Tooltip, Upload} from "antd";
+import {Button, Dropdown, Input, message, Modal, Popconfirm, Popover, Progress, Segmented, Tag, Tooltip, Upload} from "antd";
 import {
   taskAddDeleteFileRequest,
   taskAddHashDeletionRequest, taskCombineRequest, taskConvertAddToHashDeletionRequest, taskPackRequest,
@@ -450,11 +450,17 @@ const Index = () => {
       <div className="flex h-screen min-h-[720px] flex-col overflow-hidden p-6">
         <div className="flex flex-wrap items-center gap-2">
           <VersionList versionList={versionList}/>
-          <Popconfirm title="将回放并校验全部历史更新包，是否继续？" onConfirm={taskTest} okText="确定" cancelText="取消">
+          <Popconfirm
+            title="校验全部历史更新包？"
+            description="依次回放 public 中的更新索引，核对每个归档切片能否正确读取。此操作只校验，不修改工作空间。"
+            onConfirm={taskTest} okText="开始校验" cancelText="取消">
             <Button size="large">校验全部更新包</Button>
           </Popconfirm>
-          <Popconfirm title="风险操作,请再次确认!" onConfirm={taskUpload} okText="确定" cancelText="取消">
-            <Button size="large">上传 public 目录</Button>
+          <Popconfirm
+            title="同步 public 到下载源？"
+            description="把 public 顶层文件同步到已启用的 WebDAV/S3；会覆盖变化文件，并删除远端清单中本地已不存在的受管文件。"
+            onConfirm={taskUpload} okText="开始同步" cancelText="取消">
+            <Button size="large">同步 public 到下载源</Button>
           </Popconfirm>
           <Button type="primary" size="large" onClick={() => {
             const nextVersion = nextPatchVersion(versionList[0]?.label)
@@ -465,10 +471,16 @@ const Index = () => {
             setVersion(nextVersion)
             setPackShow(true)
           }}>打包新版本</Button>
-          <Popconfirm title="风险操作,请再次确认!" onConfirm={taskRevert} okText="确定" cancelText="取消">
+          <Popconfirm
+            title="按更新历史回退工作空间？"
+            description="用 public 中的完整更新历史重建 workspace。所有尚未打包的新增、删除、改名和内容修改都会被撤销。"
+            onConfirm={taskRevert} okText="确认回退" cancelText="取消">
             <Button size="large" danger>回退工作空间</Button>
           </Popconfirm>
-          <Popconfirm title="风险操作,请再次确认!" onConfirm={taskCombine} okText="确定" cancelText="取消">
+          <Popconfirm
+            title="合并历史更新包？"
+            description="先完整校验历史包，再将多个增量归档合并为 combined.tar；版本记录保留，原增量 tar 会从 public 删除。"
+            onConfirm={taskCombine} okText="开始合并" cancelText="取消">
             <Button size="large">合并更新包</Button>
           </Popconfirm>
         </div>
@@ -490,8 +502,13 @@ const Index = () => {
           </div>
           <div className="px-4">
             <div className="text-xs text-gray-500">磁盘使用</div>
-            <div className="mt-1 text-lg font-semibold text-gray-800 dark:text-gray-100">
-              {diskInfo.total > 0 ? `${(diskInfo.used / diskInfo.total * 100).toFixed(1)}%` : '-'}
+            <div className="mt-1 flex items-center gap-3">
+              <Progress
+                className="min-w-0 flex-1"
+                percent={diskInfo.total > 0 ? Number((diskInfo.used / diskInfo.total * 100).toFixed(1)) : 0}
+                size="small"
+                strokeColor="#4f46e5"
+                trailColor="#e5e7eb"/>
             </div>
             <div className="text-xs text-gray-400">{showFileSize(diskInfo.used)} / {showFileSize(diskInfo.total)}</div>
           </div>
@@ -502,11 +519,12 @@ const Index = () => {
             <div className="flex items-end justify-between gap-4 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
               <FileBreadcrumb path={path} handlerBreadcrumb={handlerBreadcrumb}/>
               <Segmented
+                className="file-view-switch"
                 value={viewMode}
                 onChange={changeViewMode}
                 options={[
-                  {value: 'grid', icon: <Tooltip title="图标视图"><Grid2X2 size={17}/></Tooltip>},
-                  {value: 'list', icon: <Tooltip title="列表视图"><List size={18}/></Tooltip>}
+                  {value: 'grid', icon: <Tooltip title="图标视图"><span className="file-view-switch-icon"><Grid2X2 size={17}/></span></Tooltip>},
+                  {value: 'list', icon: <Tooltip title="列表视图"><span className="file-view-switch-icon"><List size={18}/></span></Tooltip>}
                 ]}/>
             </div>
             <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-800">

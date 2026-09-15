@@ -6,6 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::webstate::WebState;
 
 pub async fn api_upload_fs(State(state): State<WebState>, headers: HeaderMap, body: Body) -> Response {
@@ -22,7 +23,10 @@ pub async fn api_upload_fs(State(state): State<WebState>, headers: HeaderMap, bo
         return PublicResponseBody::<()>::err("parameter 'path' is empty, and it is not allowed.");
     }
 
-    let file = state.apppath.working_dir.join(path);
+    let file = match workspace_path(&state.apppath, &path, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<()>::err(&err),
+    };
 
     println!("upload: {:?}", file);
 

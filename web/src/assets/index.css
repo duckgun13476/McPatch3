@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+.file-view-switch .ant-segmented-item-label {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-view-switch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
 body {
     margin: 0;
     border: 0;

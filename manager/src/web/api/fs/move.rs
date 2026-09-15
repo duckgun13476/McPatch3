@@ -4,6 +4,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::webstate::WebState;
 
 #[derive(Deserialize)]
@@ -28,8 +29,14 @@ pub async fn api_move(State(state): State<WebState>, Json(payload): Json<Request
         return PublicResponseBody::<()>::err("parameter 'to' is empty");
     }
 
-    let file_from = state.apppath.working_dir.join(&from);
-    let file_to = state.apppath.working_dir.join(&to);
+    let file_from = match workspace_path(&state.apppath, &from, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<()>::err(&err),
+    };
+    let file_to = match workspace_path(&state.apppath, &to, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<()>::err(&err),
+    };
 
     if !file_from.exists() {
         return PublicResponseBody::<()>::err(&format!("'{}' not exists.", from));

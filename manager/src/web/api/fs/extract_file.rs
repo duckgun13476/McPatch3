@@ -11,6 +11,7 @@ use sha2::Sha256;
 
 use crate::utility::filename_ext::GetFileNamePart;
 use crate::web::webstate::WebState;
+use crate::web::api::fs::workspace_path;
 
 pub async fn api_extract_file(State(state): State<WebState>, Query(params): Query<HashMap<String, String>>) -> Response {
     let signature = match params.get("sign") {
@@ -55,7 +56,10 @@ pub async fn api_extract_file(State(state): State<WebState>, Query(params): Quer
         return Response::builder().status(403).body(Body::new("signature is outdate".to_owned())).unwrap();
     }
 
-    let path = state.apppath.working_dir.join(path);
+    let path = match workspace_path(&state.apppath, path, false) {
+        Ok(path) => path,
+        Err(_) => return Response::builder().status(403).body(Body::empty()).unwrap(),
+    };
 
     let metadata = tokio::fs::metadata(&path).await.unwrap();
 

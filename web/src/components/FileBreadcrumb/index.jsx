@@ -2,7 +2,7 @@ import React from 'react';
 
 const Index = ({path, handlerBreadcrumb}) => {
 
-  const items = ['root', ...path]
+  const items = ['workspace', ...path]
   return (
     <>
       <div className="h-16 pr-4 pl-4 border-l-2 border-indigo-600">

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::webstate::WebState;
 
 #[derive(Deserialize)]
@@ -26,7 +27,10 @@ pub async fn api_download(State(state): State<WebState>, Json(payload): Json<Req
         return PublicResponseBody::<ResponseData>::err("parameter 'path' is empty, and it is not allowed.");
     }
 
-    let file = state.apppath.working_dir.join(payload.path);
+    let file = match workspace_path(&state.apppath, &payload.path, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<ResponseData>::err(&err),
+    };
 
     if !file.exists() || !file.is_file() {
         return PublicResponseBody::<ResponseData>::err("file not exists.");

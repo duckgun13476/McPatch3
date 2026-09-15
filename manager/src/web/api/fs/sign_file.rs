@@ -10,6 +10,7 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::webstate::WebState;
 
 #[derive(Deserialize)]
@@ -30,7 +31,10 @@ pub async fn api_sign_file(State(state): State<WebState>, Json(payload): Json<Re
         return PublicResponseBody::<ResponseData>::err("parameter 'path' is empty, and it is not allowed.");
     }
 
-    let path = state.apppath.working_dir.join(payload.path);
+    let path = match workspace_path(&state.apppath, &payload.path, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<ResponseData>::err(&err),
+    };
 
     if !path.exists() || !path.is_file() {
         return PublicResponseBody::<ResponseData>::err("file not exists.");
@@ -39,7 +43,11 @@ pub async fn api_sign_file(State(state): State<WebState>, Json(payload): Json<Re
     let username = state.auth.username().await;
     let password = state.auth.password().await;
 
-    let relative_path = path.strip_prefix(&state.apppath.working_dir).unwrap().to_str().unwrap().to_owned();
+    let relative_path = path
+        .strip_prefix(&state.apppath.workspace_dir)
+        .unwrap()
+        .to_string_lossy()
+        .replace("\\", "/");
     let expire = SystemTime::now() + Duration::from_secs(2 * 60 * 60);
     let unix_ts = expire.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
 

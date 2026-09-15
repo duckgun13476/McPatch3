@@ -4,6 +4,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::web::api::PublicResponseBody;
+use crate::web::api::fs::workspace_path;
 use crate::web::webstate::WebState;
 
 #[derive(Deserialize)]
@@ -20,7 +21,10 @@ pub async fn api_make_directory(State(state): State<WebState>, Json(payload): Js
         return PublicResponseBody::<()>::err("parameter 'path' is empty, and it is not allowed.");
     }
 
-    let file = state.apppath.working_dir.join(path);
+    let file = match workspace_path(&state.apppath, &path, false) {
+        Ok(path) => path,
+        Err(err) => return PublicResponseBody::<()>::err(&err),
+    };
 
     println!("make_directory: {:?}", file);
 
