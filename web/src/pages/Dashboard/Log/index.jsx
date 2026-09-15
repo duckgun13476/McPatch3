@@ -10,7 +10,7 @@ import {
   taskStatusRequest
 } from "@/api/task.js";
 import {terminalFullRequest, terminalMoreRequest} from "@/api/terminal.js";
-import {FileMinus2, Plus, RotateCcw, Undo2, X} from "lucide-react";
+import {ArrowLeft, FileMinus2, Plus, RotateCcw, Undo2, X} from "lucide-react";
 import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
 import {hasVersionWhitespace, nextPatchVersion} from "@/utils/version.js";
@@ -228,6 +228,11 @@ const Index = () => {
     setExcludedChangeIds([])
     setDeletePath('')
     setHashDeletePath('')
+  }
+
+  const returnToPackEditor = () => {
+    setPackPreview(null)
+    setExcludedChangeIds([])
   }
 
   const operationLabel = (operation) => ({
@@ -487,8 +492,11 @@ const Index = () => {
           </div>
         ) : (
           <div>
-            <div className="mb-3 flex items-center justify-between text-sm text-gray-500">
-              <span>共 {packPreview.changes.length} 项，已排除 {excludedChangeIds.length} 项</span>
+            <div className="mb-3 flex items-center justify-between gap-3 text-sm text-gray-500">
+              <div className="flex min-w-0 items-center gap-2">
+                <Button type="text" icon={<ArrowLeft size={17}/>} onClick={returnToPackEditor}>返回编辑</Button>
+                <span className="truncate">共 {packPreview.changes.length} 项，已排除 {excludedChangeIds.length} 项</span>
+              </div>
               {excludedChangeIds.length > 0 && (
                 <Button type="text" icon={<Undo2 size={16}/>} onClick={() => setExcludedChangeIds([])}>恢复全部</Button>
               )}
