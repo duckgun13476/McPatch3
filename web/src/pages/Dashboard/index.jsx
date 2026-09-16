@@ -1,5 +1,5 @@
 import {Outlet, useLocation, useNavigate} from "react-router-dom";
-import {AppWindow, CircleHelp, CircleUserRound, LogOut, Palette, Settings} from "lucide-react";
+import {AppWindow, CircleHelp, CircleUserRound, History, LogOut, Palette, Settings} from "lucide-react";
 import {userCheckTokenRequest, userSignOutRequest} from "@/api/user.js";
 import {message} from "antd";
 import {useDispatch, useSelector} from "react-redux";
@@ -16,6 +16,11 @@ const navs = [
     nav: '/dashboard/personalization',
     name: '个性化',
     icon: <Palette size={16} strokeWidth={1.5}/>
+  },
+  {
+    nav: '/dashboard/history',
+    name: '历史',
+    icon: <History size={16} strokeWidth={1.5}/>
   }
 ]
 

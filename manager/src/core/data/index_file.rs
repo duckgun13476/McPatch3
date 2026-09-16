@@ -178,6 +178,19 @@ impl IndexFile {
 
         metas
     }
+
+    /// 只读取指定版本的元数据，供历史详情等按需查询使用。
+    pub fn read_meta(&self, public_dir: &Path, label: &str) -> Option<(VersionIndex, VersionMeta)> {
+        let index = self.find(label)?.clone();
+        let mut reader = TarReader::new(public_dir.join(&index.filename));
+        let group = reader.read_metadata_group(index.offset, index.len);
+        let meta = group
+            .find_meta(&index.label)
+            .or_else(|| group.0.iter().find(|meta| meta.label.trim() == index.label.trim()))?;
+        let mut meta = meta.clone();
+        meta.label = index.label.clone();
+        Some((index, meta))
+    }
 }
 
 impl Index<usize> for IndexFile {

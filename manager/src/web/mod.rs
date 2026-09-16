@@ -34,6 +34,7 @@ use crate::web::api::fs::r#move::api_move;
 use crate::web::api::fs::sign_file::api_sign_file;
 use crate::web::api::fs::upload::api_upload_fs;
 use crate::web::api::misc::version_list::api_version_list;
+use crate::web::api::misc::version_history::api_version_history;
 use crate::web::api::personalization::{
     api_get as api_personalization_get, api_remove_image as api_personalization_remove_image,
     api_save as api_personalization_save, api_upload_image as api_personalization_upload_image,
@@ -180,6 +181,7 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/fs/move", post(api_move))
         .route("/api/fs/sign-file", post(api_sign_file))
         .route("/api/misc/version-list", post(api_version_list))
+        .route("/api/misc/version-history", post(api_version_history))
         .route("/api/personalization/get", post(api_personalization_get))
         .route("/api/personalization/save", post(api_personalization_save))
         .route(
