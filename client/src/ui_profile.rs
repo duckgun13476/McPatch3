@@ -21,6 +21,12 @@ pub struct UiProfile {
     pub headline: String,
     pub subtitle: String,
     pub footer: String,
+    #[serde(default)]
+    pub headline_color: String,
+    #[serde(default)]
+    pub subtitle_color: String,
+    #[serde(default)]
+    pub footer_color: String,
     pub launch_label_offset_x: i8,
     pub icon: String,
     pub icon_data_url: String,
@@ -89,6 +95,9 @@ impl Default for UiProfile {
             headline: "自动更新器".to_owned(),
             subtitle: "安全检查并应用客户端更新".to_owned(),
             footer: "请保持此窗口开启，完成后将自动启动客户端。".to_owned(),
+            headline_color: ThemeColors::default().text,
+            subtitle_color: ThemeColors::default().muted,
+            footer_color: ThemeColors::default().muted,
             launch_label_offset_x: 2,
             icon: String::new(),
             icon_data_url: data_url(include_bytes!("../app-icon.png")).unwrap_or_default(),
@@ -188,6 +197,15 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
     {
         return None;
     }
+    if profile.headline_color.is_empty() {
+        profile.headline_color = profile.theme.text.clone();
+    }
+    if profile.subtitle_color.is_empty() {
+        profile.subtitle_color = profile.theme.muted.clone();
+    }
+    if profile.footer_color.is_empty() {
+        profile.footer_color = profile.theme.muted.clone();
+    }
     for value in [
         &profile.stages.prepare,
         &profile.stages.checking,
@@ -209,6 +227,9 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
         &profile.theme.text,
         &profile.theme.muted,
         &profile.theme.border,
+        &profile.headline_color,
+        &profile.subtitle_color,
+        &profile.footer_color,
     ] {
         if !valid_color(color) {
             return None;
@@ -311,6 +332,18 @@ mod tests {
         assert!(!valid_color("147d67"));
         assert!(!valid_color("#abcd"));
         assert!(!valid_color("red"));
+    }
+
+    #[test]
+    fn old_profile_uses_existing_text_colors_for_brand_copy() {
+        let profile: UiProfile = serde_json::from_str(
+            r##"{"schema":1,"headline":"A","subtitle":"B","footer":"C","theme":{"text":"#112233","muted":"#445566"}}"##,
+        )
+        .unwrap();
+        let profile = validate_profile(profile).unwrap();
+        assert_eq!(profile.headline_color, "#112233");
+        assert_eq!(profile.subtitle_color, "#445566");
+        assert_eq!(profile.footer_color, "#445566");
     }
 
     #[test]

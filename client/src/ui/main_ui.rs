@@ -43,7 +43,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <style>
-  :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; --accent: #147d67; --accent-hover: #106b59; --accent-soft: #dff2eb; --background: #f4f7f6; --surface: #ffffff; --log-background: #f7faf9; --text: #16332d; --muted: #648078; --border: #e2ebe8; --launch-label-offset-x: 2px; }
+  :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; --accent: #147d67; --accent-hover: #106b59; --accent-soft: #dff2eb; --background: #f4f7f6; --surface: #ffffff; --log-background: #f7faf9; --text: #16332d; --muted: #648078; --border: #e2ebe8; --headline-text: #16332d; --subtitle-text: #648078; --footer-text: #648078; --launch-label-offset-x: 2px; }
   * { box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; border-radius: 12px; }
   html { background: transparent; }
@@ -70,7 +70,8 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .identity { display: flex; align-items: center; gap: 14px; }
   .mark { width: 46px; height: 46px; border-radius: 8px; background: var(--accent); color: white; display: grid; place-items: center; font-weight: 800; font-size: 15px; letter-spacing: 1px; }
   h1 { margin: 0; font-size: 23px; font-weight: 700; letter-spacing: 0; }
-  .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
+  #headline { color: var(--headline-text); }
+  .subtitle { margin-top: 4px; color: var(--subtitle-text); font-size: 13px; }
   .badge { padding: 7px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 8px 26px rgba(22, 73, 61, .07); }
   .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0; }
@@ -118,6 +119,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .foot { margin-top: auto; color: var(--muted); font-size: 12px; text-align: center; }
   .foot:not(.complete) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 44%); gap: 16px; align-items: center; }
   .foot:not(.complete) #footer { text-align: left; }
+  #footer { color: var(--footer-text); }
   .foot.complete { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr); gap: 14px; align-items: center; }
   .foot.complete #footer { display: none; }
   #footerActions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
@@ -183,10 +185,13 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('bar').style.width = percent + '%';
     document.getElementById('trafficValue').textContent = traffic;
   };
-  window.updateProfile = ({ headline, subtitle, footer, iconDataUrl, backgroundDataUrl, launchLabelOffsetX, theme }) => {
+  window.updateProfile = ({ headline, subtitle, footer, headlineColor, subtitleColor, footerColor, iconDataUrl, backgroundDataUrl, launchLabelOffsetX, theme }) => {
     document.getElementById('headline').textContent = headline;
     document.getElementById('subtitle').textContent = subtitle;
     document.getElementById('footer').textContent = footer;
+    document.documentElement.style.setProperty('--headline-text', headlineColor);
+    document.documentElement.style.setProperty('--subtitle-text', subtitleColor);
+    document.documentElement.style.setProperty('--footer-text', footerColor);
     const launchOffset = Math.max(-24, Math.min(24, Number(launchLabelOffsetX) || 0));
     document.documentElement.style.setProperty('--launch-label-offset-x', launchOffset + 'px');
     const mark = document.getElementById('mark');
@@ -1020,6 +1025,9 @@ impl MainWindow {
             "headline": &profile.headline,
             "subtitle": &profile.subtitle,
             "footer": &profile.footer,
+            "headlineColor": &profile.headline_color,
+            "subtitleColor": &profile.subtitle_color,
+            "footerColor": &profile.footer_color,
             "launchLabelOffsetX": profile.launch_label_offset_x,
             "iconDataUrl": &profile.icon_data_url,
             "backgroundDataUrl": &profile.background_data_url,
