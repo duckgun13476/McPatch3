@@ -10,6 +10,7 @@ pub mod public;
 pub mod webpage;
 pub mod misc;
 pub mod personalization;
+pub mod updater;
 
 /// 公共响应体
 #[derive(Serialize)]

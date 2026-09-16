@@ -77,7 +77,7 @@ struct OneShotHashDeletionManifest {
     deletions: Vec<ClientHashDeletion>,
 }
 
-const UPDATER_SOURCE_PATH: &str = ".minecraft/autoupdate/AutoUpdateClient.exe";
+pub const UPDATER_SOURCE_PATH: &str = ".minecraft/autoupdate/AutoUpdateClient.exe";
 const UPDATER_STARTLIST_PATH: &str = ".minecraft/autoupdate/startlist.txt";
 const UPDATER_BASE_NAME: &str = "AutoUpdateClient.exe";
 const UPDATER_VERSION_PREFIX: &str = "AutoUpdateClient-";
@@ -320,6 +320,26 @@ pub fn select_pack_changes(
         emitted_pending_deletions,
         emitted_pending_hash_deletions,
     })
+}
+
+/// Select only the immutable updater binary and its coupled start list.
+/// Other workspace and pending changes remain untouched for a later package.
+pub fn select_updater_self_update(plan: PackPlan) -> Result<PackSelection, String> {
+    if plan.required_change_ids.is_empty() {
+        return Err("更新器内容没有变化，无需生成更新包".to_owned());
+    }
+    let excluded = plan
+        .preview
+        .changes
+        .iter()
+        .filter(|change| !plan.required_change_ids.contains(&change.id))
+        .map(|change| change.id.clone())
+        .collect::<Vec<_>>();
+    let selection = select_pack_changes(plan, &excluded)?;
+    if selection.changes.len() != 2 || !selection.hash_deletions.is_empty() {
+        return Err("更新器专用包必须且只能包含版本化 EXE 与启动清单".to_owned());
+    }
+    Ok(selection)
 }
 
 pub fn task_pack(
@@ -935,10 +955,11 @@ fn canonical_change(change: &FileChange) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pack_plan, change_id, change_sort_key, change_touches_path, count_changes,
+        build_pack_plan, change_id, change_path, change_sort_key, change_touches_path, count_changes,
         fingerprint, load_one_shot_hash_deletions, normalize_version_label,
-        prepare_updater_self_update, preview_change, select_pack_changes, task_pack_selected,
-        PackChangeCounts, PackPlan, PackPreview, UPDATER_SOURCE_PATH, UPDATER_STARTLIST_PATH,
+        prepare_updater_self_update, preview_change, preview_hash_deletion, select_pack_changes,
+        select_updater_self_update, task_pack_selected, PackChangeCounts, PackPlan, PackPreview,
+        UPDATER_SOURCE_PATH, UPDATER_STARTLIST_PATH,
     };
     use crate::app_path::AppPath;
     use crate::config::Config;
@@ -1159,6 +1180,62 @@ mod tests {
 
         let error = select_pack_changes(plan, &[binary_id]).err().unwrap();
         assert!(error.contains("必须一起发布"));
+    }
+
+    #[test]
+    fn updater_only_selection_leaves_unrelated_workspace_changes_pending() {
+        let binary = update_file(
+            ".minecraft/autoupdate/AutoUpdateClient-aaaaaaaaaaaaaaaa.exe",
+            "binary",
+        );
+        let startlist = update_file(UPDATER_STARTLIST_PATH, "list");
+        let unrelated = update_file(".minecraft/mods/example.jar", "mod");
+        let binary_id = change_id(&binary);
+        let startlist_id = change_id(&startlist);
+        let changes = vec![binary, unrelated, startlist];
+        let previews = changes
+            .iter()
+            .map(|change| preview_change(change, &HashSet::new(), false))
+            .chain(std::iter::once(preview_hash_deletion(&ClientHashDeletion {
+                path: ".minecraft/config/legacy.toml".to_owned(),
+                sha256: "a".repeat(64),
+                len: 42,
+            })))
+            .collect();
+        let plan = PackPlan {
+            preview: PackPreview {
+                confirmation_required: true,
+                fingerprint: "fingerprint".to_owned(),
+                changes: previews,
+                counts: PackChangeCounts::default(),
+            },
+            changes,
+            pending_deletions: HashSet::new(),
+            hash_deletions: vec![ClientHashDeletion {
+                path: ".minecraft/config/legacy.toml".to_owned(),
+                sha256: "a".repeat(64),
+                len: 42,
+            }],
+            pending_hash_deletions: [".minecraft/config/legacy.toml".to_owned()]
+                .into_iter()
+                .collect(),
+            required_change_ids: [binary_id, startlist_id].into_iter().collect(),
+        };
+
+        let selection = select_updater_self_update(plan).unwrap();
+        assert_eq!(selection.changes.len(), 2);
+        assert!(selection
+            .changes
+            .iter()
+            .all(|change| change_path(change).is_some_and(|path| {
+                path == UPDATER_STARTLIST_PATH
+                    || path.starts_with(
+                        ".minecraft/autoupdate/AutoUpdateClient-aaaaaaaaaaaaaaaa.exe",
+                    )
+            })));
+        assert!(selection.hash_deletions.is_empty());
+        assert!(selection.emitted_pending_deletions.is_empty());
+        assert!(selection.emitted_pending_hash_deletions.is_empty());
     }
 
     #[test]

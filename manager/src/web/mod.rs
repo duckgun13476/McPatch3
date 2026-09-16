@@ -50,6 +50,7 @@ use crate::web::api::task::pack::api_pack;
 use crate::web::api::task::revert::api_revert;
 use crate::web::api::task::sync::api_upload_api;
 use crate::web::api::task::test::api_test;
+use crate::web::api::task::updater::api_pack_updater;
 use crate::web::api::terminal::full::api_full;
 use crate::web::api::terminal::more::api_more;
 use crate::web::api::terminal::stream::api_stream;
@@ -58,6 +59,7 @@ use crate::web::api::user::change_username::api_change_username;
 use crate::web::api::user::check_token::api_check_token;
 use crate::web::api::user::login::api_login;
 use crate::web::api::user::logout::api_logout;
+use crate::web::api::updater::{api_status as api_updater_status, api_upload as api_updater_upload};
 use crate::web::api::webpage::api_webpage;
 use crate::web::api::webpage::api_webpage_index;
 use crate::web::auth_layer::AuthLayer;
@@ -153,6 +155,7 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/task/test", post(api_test))
         .route("/api/task/combine", post(api_combine))
         .route("/api/task/pack", post(api_pack))
+        .route("/api/task/pack-updater", post(api_pack_updater))
         .route("/api/task/change/delete-file", post(api_add_delete_file))
         .route(
             "/api/task/change/remove-delete-file",
@@ -184,6 +187,8 @@ pub async fn serve_web(apppath: AppPath, config: Config) {
         .route("/api/misc/version-history", post(api_version_history))
         .route("/api/personalization/get", post(api_personalization_get))
         .route("/api/personalization/save", post(api_personalization_save))
+        .route("/api/updater/status", post(api_updater_status))
+        .route("/api/updater/upload", post(api_updater_upload))
         .route(
             "/api/personalization/upload-image",
             post(api_personalization_upload_image),

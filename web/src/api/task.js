@@ -9,6 +9,11 @@ export const taskPackRequest = (label, changeLogs, confirmationFingerprint = nul
   excluded_change_ids: excludedChangeIds
 })
 
+export const taskPackUpdaterRequest = (label, changeLogs = '更新自动更新器') => instance.post('/task/pack-updater', {
+  label,
+  change_logs: changeLogs
+})
+
 export const taskAddDeleteFileRequest = (path) => instance.post('/task/change/delete-file', {path})
 
 export const taskRemoveDeleteFileRequest = (path) => instance.post('/task/change/remove-delete-file', {path})

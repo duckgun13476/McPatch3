@@ -19,3 +19,15 @@ export const personalizationUploadImageRequest = async (kind, file) => {
   })
   return response.json()
 }
+
+export const updaterStatusRequest = () => instance.post('/updater/status', {})
+
+export const updaterUploadRequest = async file => {
+  const baseUrl = import.meta.env.VITE_API_URL || ''
+  const response = await fetch(`${baseUrl}/updater/upload`, {
+    method: 'POST',
+    headers: {Token: store.getState().user.token},
+    body: file
+  })
+  return response.json()
+}

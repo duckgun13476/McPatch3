@@ -1,12 +1,18 @@
 import React, {useEffect, useMemo, useState} from "react";
 import {Button, ColorPicker, Input, InputNumber, message, Upload} from "antd";
-import {Image, RotateCcw, Save, UploadCloud, X} from "lucide-react";
+import {FileUp, Image, RotateCcw, Save, UploadCloud, X} from "lucide-react";
 import {
   personalizationGetRequest,
   personalizationRemoveImageRequest,
   personalizationSaveRequest,
-  personalizationUploadImageRequest
+  personalizationUploadImageRequest,
+  updaterStatusRequest,
+  updaterUploadRequest
 } from "@/api/personalization.js";
+import {miscVersionListRequest} from "@/api/misc.js";
+import {taskPackUpdaterRequest} from "@/api/task.js";
+import {nextPatchVersion} from "@/utils/version.js";
+import {showFileSize} from "@/utils/tool.js";
 
 const themeFields = [
   ['accent', '主色'], ['accentHover', '悬浮色'], ['accentSoft', '浅强调色'],
@@ -44,6 +50,9 @@ const Index = () => {
   const [backgroundFile, setBackgroundFile] = useState(undefined)
   const [revision, setRevision] = useState(Date.now())
   const [saving, setSaving] = useState(false)
+  const [updaterFile, setUpdaterFile] = useState(undefined)
+  const [updaterStatus, setUpdaterStatus] = useState(null)
+  const [updatingUpdater, setUpdatingUpdater] = useState(false)
 
   const load = async () => {
     const response = await personalizationGetRequest()
@@ -59,6 +68,12 @@ const Index = () => {
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    updaterStatusRequest().then(response => {
+      if (response?.code === 1) setUpdaterStatus(response.data)
+    })
+  }, [])
 
   const iconPreview = useMemo(() => {
     if (iconFile instanceof File) return URL.createObjectURL(iconFile)
@@ -113,6 +128,31 @@ const Index = () => {
       messageApi.error(error.message || '保存个性化配置失败')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const updateUpdater = async () => {
+    if (!(updaterFile instanceof File)) {
+      messageApi.error('请先选择新的 AutoUpdateClient.exe')
+      return
+    }
+    setUpdatingUpdater(true)
+    try {
+      const versions = await miscVersionListRequest()
+      if (versions?.code !== 1) throw new Error(versions?.msg || '读取版本列表失败')
+      const label = nextPatchVersion(versions.data?.versions?.[0]?.label)
+      if (!label) throw new Error('无法生成下一个版本号')
+      const uploaded = await updaterUploadRequest(updaterFile)
+      if (uploaded?.code !== 1) throw new Error(uploaded?.msg || '上传更新器失败')
+      setUpdaterStatus(uploaded.data)
+      const packed = await taskPackUpdaterRequest(label)
+      if (packed?.code !== 1) throw new Error(packed?.msg || '生成更新器专用包失败')
+      setUpdaterFile(undefined)
+      messageApi.success(`更新器专用包 ${label} 已提交，工作区其他修改未打包`)
+    } catch (error) {
+      messageApi.error(error.message || '更新更新器失败')
+    } finally {
+      setUpdatingUpdater(false)
     }
   }
 
@@ -176,6 +216,21 @@ const Index = () => {
               <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>
               <ImageField title="更新器图标" hint="支持 PNG、GIF、JPEG、WebP，最大 8 MiB。" preview={iconPreview} onSelect={setIconFile} onRemove={() => setIconFile(null)}/>
               <ImageField title="更新器背景图" hint="建议使用与窗口接近黄金比例的横向图片。" preview={backgroundPreview} onSelect={setBackgroundFile} onRemove={() => setBackgroundFile(null)}/>
+              <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-sm font-semibold">更新器程序</div>
+                  <div className="mt-1 text-xs leading-5 text-[#6b7f7b] dark:text-[#91a7a1]">单独生成更新器自更新包，仅包含哈希命名 EXE 与启动清单；工作区其他修改保持不动。</div>
+                </div>
+                {updaterStatus?.exists && <div className="rounded-md bg-[#edf5f2] px-3 py-2 text-xs text-[#48635d] dark:bg-[#1b2a27] dark:text-[#a8bbb6]">当前源文件 {showFileSize(updaterStatus.size)} · SHA-256 {updaterStatus.sha256.slice(0, 16)}...</div>}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Upload accept=".exe,application/vnd.microsoft.portable-executable,application/x-msdownload" maxCount={1} showUploadList={false} beforeUpload={file => { setUpdaterFile(file); return false }}>
+                    <Button icon={<FileUp size={16}/>}>选择 EXE</Button>
+                  </Upload>
+                  <Button type="primary" loading={updatingUpdater} disabled={!updaterFile} onClick={updateUpdater}>更新</Button>
+                  <span className="min-w-0 truncate text-xs text-[#6b7f7b] dark:text-[#91a7a1]">{updaterFile?.name || '尚未选择文件'}</span>
+                </div>
+              </div>
               <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>
               <div>
                 <div className="mb-3 text-sm font-semibold">配色</div>
