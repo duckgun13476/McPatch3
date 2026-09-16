@@ -71,7 +71,9 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .mark { width: 46px; height: 46px; border-radius: 8px; background: var(--accent); color: white; display: grid; place-items: center; font-weight: 800; font-size: 15px; letter-spacing: 1px; }
   h1 { margin: 0; font-size: 23px; font-weight: 700; letter-spacing: 0; }
   #headline { color: var(--headline-text); }
-  .subtitle { margin-top: 4px; color: var(--subtitle-text); font-size: 13px; }
+  .subtitle-row { margin-top: 4px; display: flex; align-items: center; gap: 8px; }
+  .subtitle { color: var(--subtitle-text); font-size: 13px; }
+  .app-version { padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; line-height: 16px; }
   .badge { padding: 7px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 8px 26px rgba(22, 73, 61, .07); }
   .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0; }
@@ -149,7 +151,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     <header class="header">
       <div class="identity">
         <div class="mark" id="mark">UP</div>
-        <div><h1 id="headline">自动更新器</h1><div class="subtitle" id="subtitle">安全检查并应用客户端更新</div></div>
+        <div><h1 id="headline">自动更新器</h1><div class="subtitle-row"><div class="subtitle" id="subtitle">安全检查并应用客户端更新</div><span class="app-version" id="appVersion">v{{APP_VERSION}}</span></div></div>
       </div>
       <div class="badge" id="stage">正在准备</div>
     </header>
@@ -868,8 +870,9 @@ impl MainWindow {
         let visible_frame_generation = self.visible_frame_generation.clone();
         let dialog_result = self.dialog_result.clone();
         let close_animation_started = self.close_animation_started.clone();
+        let update_page = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
         let webview = WebViewBuilder::new()
-            .with_html(UPDATE_PAGE)
+            .with_html(update_page)
             .with_transparent(true)
             .with_ipc_handler(move |request| match request.body().as_str() {
                 "ready" => webview_ready.store(true, Ordering::Release),
@@ -1307,6 +1310,14 @@ mod tests {
         assert!(UPDATE_PAGE.contains("window.showDialog"));
         assert!(UPDATE_PAGE.contains("dialog:yes"));
         assert!(UPDATE_PAGE.contains("关闭更新器"));
+    }
+
+    #[test]
+    fn updater_version_is_injected_into_the_visible_header() {
+        assert!(UPDATE_PAGE.contains("id=\"appVersion\""));
+        let rendered = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
+        assert!(rendered.contains("v0.0.2"));
+        assert!(!rendered.contains("{{APP_VERSION}}"));
     }
 
     #[test]
