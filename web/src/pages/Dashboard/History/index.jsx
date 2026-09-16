@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {Empty, Input, Pagination, Segmented, Spin, Tag, message} from "antd";
 import {ArrowRight, Box, FileClock, FileMinus2, FilePenLine, FolderCog, Search} from "lucide-react";
 import {miscVersionHistoryRequest, miscVersionListRequest} from "@/api/misc.js";
@@ -30,6 +30,7 @@ const Index = () => {
   const [changeSearch, setChangeSearch] = useState('');
   const [changeGroup, setChangeGroup] = useState('all');
   const [page, setPage] = useState(1);
+  const detailScrollRef = useRef(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
@@ -91,14 +92,15 @@ const Index = () => {
   }, [detail, changeGroup, changeSearch]);
 
   const selectVersion = label => {
+    detailScrollRef.current?.scrollTo({top: 0});
     setSelected(label);
     setDetail(null);
   };
 
   return (
-    <div className="min-h-screen bg-[#f4f8f7] px-6 py-6 text-[#18332d] dark:bg-[#0d1412] dark:text-[#e5efec] xl:px-8">
+    <div className="flex h-screen min-h-[640px] flex-col overflow-hidden bg-[#f4f8f7] px-6 py-6 text-[#18332d] dark:bg-[#0d1412] dark:text-[#e5efec] xl:px-8">
       {contextHolder}
-      <header className="mb-5 flex items-end justify-between gap-4">
+      <header className="mb-5 flex shrink-0 items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">打包历史</h1>
           <p className="mt-1 text-sm text-[#687c77] dark:text-[#91a7a1]">查看每个已发布版本的更新日志和真实文件操作。</p>
@@ -109,8 +111,8 @@ const Index = () => {
         </div>
       </header>
 
-      <main className="grid min-h-[calc(100vh-128px)] grid-cols-1 overflow-hidden border border-[#d9e5e1] bg-white dark:border-[#293b37] dark:bg-[#121b19] xl:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="flex min-h-[420px] flex-col border-b border-[#d9e5e1] dark:border-[#293b37] xl:border-b-0 xl:border-r">
+      <main className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden border border-[#d9e5e1] bg-white dark:border-[#293b37] dark:bg-[#121b19] xl:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="flex min-h-0 flex-col border-b border-[#d9e5e1] dark:border-[#293b37] xl:border-b-0 xl:border-r">
           <div className="border-b border-[#e4ece9] p-4 dark:border-[#293b37]">
             <Input
               allowClear
@@ -140,11 +142,11 @@ const Index = () => {
           </div>
         </aside>
 
-        <section className="min-w-0">
+        <section ref={detailScrollRef} className="min-h-0 min-w-0 overflow-y-auto">
           {loadingDetail ? <div className="grid h-full min-h-[480px] place-items-center"><Spin size="large"/></div> : !detail ? (
             <div className="grid h-full min-h-[480px] place-items-center"><Empty description="选择一个版本查看文件变化"/></div>
           ) : (
-            <div className="flex h-full min-h-[560px] flex-col">
+            <div className="flex min-h-full flex-col">
               <div className="border-b border-[#e4ece9] px-5 py-5 dark:border-[#293b37]">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
@@ -175,14 +177,14 @@ const Index = () => {
                 <span className="text-xs text-[#718681] dark:text-[#91a7a1]">显示 {filteredChanges.length} / {detail.changes.length}</span>
               </div>
 
-              <div className="flex-1 overflow-auto">
+              <div>
                 {filteredChanges.length === 0 ? <div className="grid h-48 place-items-center"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的文件变化"/></div> : filteredChanges.map((change, index) => {
                   const meta = operationMeta[change.operation] || {label: change.operation, tone: 'default', icon: Box};
                   const Icon = meta.icon;
                   const mainPath = change.path || change.to || '';
                   return (
                     <div key={`${change.operation}-${mainPath}-${index}`} className="grid grid-cols-[28px_minmax(0,1fr)_auto] gap-3 border-b border-[#edf2f0] px-5 py-3 dark:border-[#22312e]">
-                      <Icon size={17} className="mt-1 text-[#66807a]"/>
+                      <Icon size={17} className="self-center text-[#66807a]"/>
                       <div className="min-w-0">
                         {change.operation === 'move-file' ? (
                           <div className="flex min-w-0 items-center gap-2 font-mono text-sm"><span className="truncate">{change.from}</span><ArrowRight size={14} className="shrink-0"/><span className="truncate">{change.to}</span></div>
@@ -194,7 +196,7 @@ const Index = () => {
                           {change.hash && <span className="font-mono" title={change.hash}>哈希 {change.hash.slice(0, 16)}...</span>}
                         </div>
                       </div>
-                      <Tag color={meta.tone}>{meta.label}</Tag>
+                      <Tag className="self-center" color={meta.tone}>{meta.label}</Tag>
                     </div>
                   );
                 })}
