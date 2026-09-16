@@ -18,6 +18,8 @@ pub struct UiProfile {
     pub subtitle_color: String,
     #[serde(default)]
     pub footer_color: String,
+    #[serde(default)]
+    pub traffic_color: String,
     pub launch_label_offset_x: i8,
     pub icon: String,
     pub background_image: String,
@@ -87,6 +89,7 @@ impl Default for UiProfile {
             headline_color: ThemeColors::default().text,
             subtitle_color: ThemeColors::default().muted,
             footer_color: ThemeColors::default().muted,
+            traffic_color: ThemeColors::default().text,
             launch_label_offset_x: 2,
             icon: String::new(),
             background_image: String::new(),
@@ -123,6 +126,9 @@ impl UiProfile {
         if self.footer_color.is_empty() {
             self.footer_color = self.theme.muted.clone();
         }
+        if self.traffic_color.is_empty() {
+            self.traffic_color = self.theme.text.clone();
+        }
         for value in [
             &self.stages.prepare,
             &self.stages.checking,
@@ -147,6 +153,7 @@ impl UiProfile {
             &self.headline_color,
             &self.subtitle_color,
             &self.footer_color,
+            &self.traffic_color,
         ] {
             if !valid_color(color) {
                 return Err("颜色必须使用 #RRGGBB 格式".to_owned());
@@ -200,6 +207,7 @@ mod tests {
         assert_eq!(profile.headline_color, "#112233");
         assert_eq!(profile.subtitle_color, "#445566");
         assert_eq!(profile.footer_color, "#445566");
+        assert_eq!(profile.traffic_color, "#112233");
     }
 
     #[test]

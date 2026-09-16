@@ -114,6 +114,7 @@ const Index = () => {
         headlineColor: profile.headlineColor,
         subtitleColor: profile.subtitleColor,
         footerColor: profile.footerColor,
+        trafficColor: profile.trafficColor,
         launchLabelOffsetX: profile.launchLabelOffsetX,
         theme: profile.theme
       })
@@ -200,6 +201,16 @@ const Index = () => {
                     <div className="font-semibold">更新日志</div>
                     <div className="mt-3 h-[calc(100%-32px)] rounded-md border p-4 text-sm leading-7" style={{background: theme.logBackground, borderColor: theme.border}}>修复客户端显示问题<br/>优化自动更新体验<br/>调整资源加载流程</div>
                   </div>
+                  <div className="mt-auto grid grid-cols-[minmax(0,3fr)_minmax(150px,1fr)] items-center gap-4">
+                    <div className="flex min-w-0 items-center gap-3 border-l-2 pl-4" style={{borderColor: theme.accentSoft, color: profile.trafficColor}}>
+                      <span className="text-xl font-extrabold" style={{color: theme.accent}}>↓</span>
+                      <div className="min-w-0 text-left"><div className="text-xs font-bold">本次下载</div><div className="truncate text-sm font-bold">128.0 MB</div></div>
+                    </div>
+                    <div className="grid h-12 grid-cols-[30px_minmax(0,1fr)_30px] items-center rounded-full px-2 text-sm font-bold text-white" style={{background: theme.accent}}>
+                      <span className="grid h-8 w-8 place-items-center rounded-full text-base" style={{background: theme.surface, color: theme.accent}}>▶</span>
+                      <span className="text-center" style={{transform: `translateX(${profile.launchLabelOffsetX}px)`}}>启动</span><span/>
+                    </div>
+                  </div>
                   <div className="text-center text-xs" style={{color: profile.footerColor}}>{profile.footer}</div>
                 </div>
               </div>
@@ -211,6 +222,7 @@ const Index = () => {
                 <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>主标题</span><ColorPicker disabledAlpha size="small" value={profile.headlineColor} onChange={color => updateProfile('headlineColor', color.toHexString())}/></span><Input className="mt-2" value={profile.headline} maxLength={80} onChange={event => updateProfile('headline', event.target.value)}/></label>
                 <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>副标题</span><ColorPicker disabledAlpha size="small" value={profile.subtitleColor} onChange={color => updateProfile('subtitleColor', color.toHexString())}/></span><Input className="mt-2" value={profile.subtitle} maxLength={80} onChange={event => updateProfile('subtitle', event.target.value)}/></label>
                 <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>底部提示</span><ColorPicker disabledAlpha size="small" value={profile.footerColor} onChange={color => updateProfile('footerColor', color.toHexString())}/></span><Input className="mt-2" value={profile.footer} maxLength={80} onChange={event => updateProfile('footer', event.target.value)}/></label>
+                <label className="flex items-center justify-between text-xs text-[#6b7f7b] dark:text-[#91a7a1]">下载流量文字<ColorPicker disabledAlpha size="small" value={profile.trafficColor} onChange={color => updateProfile('trafficColor', color.toHexString())}/></label>
                 <label className="flex items-center justify-between text-xs text-[#6b7f7b] dark:text-[#91a7a1]">启动文字水平偏移<InputNumber min={-24} max={24} value={profile.launchLabelOffsetX} onChange={value => updateProfile('launchLabelOffsetX', value ?? 0)}/></label>
               </div>
               <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>

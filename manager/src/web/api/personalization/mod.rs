@@ -22,6 +22,7 @@ pub struct UpdateProfileRequest {
     headline_color: Option<String>,
     subtitle_color: Option<String>,
     footer_color: Option<String>,
+    traffic_color: Option<String>,
     launch_label_offset_x: i8,
     theme: ThemeColors,
 }
@@ -59,6 +60,9 @@ pub async fn api_save(
     }
     if let Some(color) = payload.footer_color {
         profile.footer_color = color;
+    }
+    if let Some(color) = payload.traffic_color {
+        profile.traffic_color = color;
     }
     profile.launch_label_offset_x = payload.launch_label_offset_x;
     profile.theme = payload.theme;
