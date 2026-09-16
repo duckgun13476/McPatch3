@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "config_template_derive",
+    "client", 
+    "xtask"
+]
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+lto = true
+debug = "line-directives-only"
+split-debuginfo = "packed"
+overflow-checks = true

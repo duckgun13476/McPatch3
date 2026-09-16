@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./client/Cargo.toml",
+        "./config_template_derive/Cargo.toml"
+    ],
+    "rust-analyzer.checkOnSave": true
+}

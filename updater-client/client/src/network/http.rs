@@ -1,0 +1,224 @@
+use std::future::Future;
+use std::ops::Range;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderName;
+use reqwest::Client;
+use reqwest::ClientBuilder;
+use reqwest::Response;
+use tokio::io::AsyncRead;
+use tokio::pin;
+
+use crate::error::BusinessError;
+use crate::global_config::GlobalConfig;
+use crate::network::DownloadResult;
+use crate::network::UpdatingSource;
+
+/// 代表http更新协议
+pub struct HttpProtocol {
+    /// 更新地址的url
+    pub url: String,
+
+    /// http客户端对象
+    pub client: Client,
+
+    /// 打码的关键字，所有日志里的这个关键字都会被打码。通常用来保护服务器ip或者域名地址不被看到
+    mask_keyword: String,
+
+    /// 当前这个更新协议的编号，用来做debug用途
+    index: u32,
+}
+
+impl HttpProtocol {
+    pub fn new(url: &str, config: &GlobalConfig, index: u32) -> Self {
+        Self::with_timeout(url, config, index, config.http_timeout)
+    }
+
+    pub fn new_external(config: &GlobalConfig) -> Self {
+        // Public mod CDNs can take several seconds just to complete TLS from
+        // mainland networks. Keep their pooled client separate from the fast
+        // mcpatch source timeout, and reuse it across every file and segment.
+        Self::with_timeout("", config, u32::MAX, config.http_timeout.max(30_000))
+    }
+
+    fn with_timeout(url: &str, config: &GlobalConfig, index: u32, timeout_ms: u32) -> Self {
+        // 添加自定义协议头
+        let mut def_headers = HeaderMap::new();
+
+        def_headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+
+        for header in &config.http_headers {
+            let k = HeaderName::from_str(&header.0).unwrap();
+            let v = header.1.to_owned().parse().unwrap();
+            def_headers.insert(k, v);
+        }
+
+        let client = ClientBuilder::new()
+            .default_headers(def_headers)
+            .connect_timeout(Duration::from_millis(timeout_ms as u64))
+            .read_timeout(Duration::from_millis(timeout_ms as u64))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(30))
+            .user_agent("McPatch-AutoUpdater/1")
+            .danger_accept_invalid_certs(config.http_ignore_certificate)
+            .use_rustls_tls() // https://github.com/seanmonstar/reqwest/issues/2004#issuecomment-2180557375
+            .build()
+            .unwrap();
+
+        let mask_keyword = match reqwest::Url::parse(url) {
+            Ok(parsed) => parsed.host_str().unwrap_or("").to_owned(),
+            Err(_) => "".to_owned(),
+        };
+
+        Self {
+            url: url.to_owned(),
+            client,
+            mask_keyword,
+            index,
+        }
+    }
+
+    pub(crate) async fn request_url(
+        &self,
+        full_url: &str,
+        range: &Range<u64>,
+        desc: &str,
+    ) -> DownloadResult {
+        // 检查输入参数，start不能大于end
+        let partial_file = range.start > 0 || range.end > 0;
+
+        if partial_file {
+            assert!(range.end >= range.start);
+        }
+
+        // 构建请求
+        let mut req = self.client.get(full_url);
+        if partial_file {
+            req = req.header("Range", format!("bytes={}-{}", range.start, range.end - 1));
+        }
+        let req = req.build().unwrap();
+
+        // 发起请求
+        let rsp = match self.client.execute(req).await {
+            Ok(rsp) => rsp,
+            Err(err) => return Err(std::io::Error::new(std::io::ErrorKind::Other, err)),
+        };
+
+        let code = rsp.status().as_u16();
+
+        // 检查状态码
+        if (!partial_file && (code < 200 || code >= 300)) || (partial_file && code != 206) {
+            // 如果状态码不对，就考虑输出响应体内容，因为通常会包含一些服务端返回的错误信息，对排查问题很有帮助
+            let mut body = rsp.text().await.map_or_else(|e| format!("{:?}", e), |v| v);
+
+            // log_debug(format!("------------\n{}\n------------", body));
+
+            body.truncate(300);
+
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回了{}而不是206: {} ({})\n{}",
+                self.index, code, full_url, desc, body
+            ))));
+        }
+
+        let len = match rsp.content_length() {
+            Some(len) => len,
+            None => {
+                return Ok(Err(BusinessError::new(format!(
+                    "服务器({})没有返回content-length头: {} ({})",
+                    self.index, full_url, desc
+                ))))
+            }
+        };
+
+        if (range.end - range.start) > 0 && len != range.end - range.start {
+            return Ok(Err(BusinessError::new(format!(
+                "服务器({})返回的content-length头 {} 不等于{}: {}",
+                self.index,
+                len,
+                range.end - range.start,
+                full_url
+            ))));
+        }
+
+        Ok(Ok((len, Box::pin(AsyncStreamBody(rsp, None)))))
+    }
+}
+
+#[async_trait]
+impl UpdatingSource for HttpProtocol {
+    async fn request(
+        &mut self,
+        path: &str,
+        range: &Range<u64>,
+        desc: &str,
+        _config: &GlobalConfig,
+    ) -> DownloadResult {
+        let full_url = if path.is_empty() {
+            self.url.to_owned()
+        } else {
+            format!(
+                "{}{}{}",
+                self.url,
+                if self.url.ends_with("/") { "" } else { "/" },
+                path
+            )
+        };
+
+        self.request_url(&full_url, range, desc).await
+    }
+
+    fn mask_keyword(&self) -> &str {
+        &self.mask_keyword
+    }
+}
+
+pub struct AsyncStreamBody(pub Response, pub Option<bytes::Bytes>);
+
+impl AsyncRead for AsyncStreamBody {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if buf.remaining() == 0 {
+            return std::task::Poll::Ready(Ok(()));
+        }
+
+        if self.1.is_none() {
+            let bytes = {
+                let chunk = self.0.chunk();
+                pin!(chunk);
+
+                match chunk.poll(cx) {
+                    std::task::Poll::Ready(Ok(Some(chunk))) => chunk,
+                    std::task::Poll::Ready(Ok(None)) => return std::task::Poll::Ready(Ok(())),
+                    std::task::Poll::Ready(Err(err)) => {
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            err,
+                        )))
+                    }
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                }
+            };
+
+            self.1 = Some(bytes);
+        }
+
+        let holding = self.1.as_mut().unwrap();
+        let count = buf.remaining().min(holding.len());
+
+        buf.put_slice(&holding.split_to(count));
+
+        if holding.len() == 0 {
+            self.1 = None;
+        }
+
+        std::task::Poll::Ready(Ok(()))
+    }
+}
