@@ -7,14 +7,22 @@ import java.io.InputStreamReader;
 import java.lang.instrument.Instrumentation;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.awt.Desktop;
+import java.awt.GraphicsEnvironment;
+import javax.swing.JDialog;
+import javax.swing.JOptionPane;
+import javax.swing.JTextArea;
+import javax.swing.UIManager;
 
 public class Mcpatch2Loader {
     private static final int UPDATE_BLOCKED_EXIT_CODE = 10;
+    private static final String CLIENT_SOURCE_URL = "https://github.com/BalloonUpdate/Mcpatch2RustClient";
     public static void main(String[] args) throws IOException, InterruptedException {
         entrance();
     }
@@ -56,6 +64,8 @@ public class Mcpatch2Loader {
         List<File> candidates = executableCandidates(content, startListPath, jarFile);
         Process process = null;
         File exeFile = null;
+        List<String> launchFailures = new ArrayList<>();
+        boolean possibleSecuritySoftwareInterference = false;
 
         // A newly downloaded updater may be missing or unusable after an
         // interrupted update. Try the ordered fallbacks without deleting any
@@ -71,12 +81,19 @@ public class Mcpatch2Loader {
                 exeFile = candidate;
                 break;
             } catch (IOException e) {
-                System.err.println("failed to start mcpatch candidate " + candidate.getName() + ": " + e.getMessage());
+                String failure = candidate.getName() + ": " + e.getMessage();
+                launchFailures.add(failure);
+                possibleSecuritySoftwareInterference |= isPossibleSecuritySoftwareInterference(e);
+                System.err.println("failed to start mcpatch candidate " + failure);
             }
         }
 
-        if (process == null || exeFile == null)
-            throw new RuntimeException("no startable updater executable found in: " + startListPath);
+        if (process == null || exeFile == null) {
+            if (possibleSecuritySoftwareInterference)
+                showSecuritySoftwareHint(candidates.get(0), launchFailures);
+            throw new RuntimeException("no startable updater executable found in: " + startListPath
+                    + "; failures: " + String.join(" | ", launchFailures));
+        }
 
         System.out.println("mcpatch-executable is " + exeFile.getAbsolutePath());
         Process launchedProcess = process;
@@ -175,6 +192,57 @@ public class Mcpatch2Loader {
                 Files.delete(candidate.toPath());
             } catch (IOException e) {
                 System.err.println("failed to remove old mcpatch executable " + candidate.getName() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    static boolean isPossibleSecuritySoftwareInterference(IOException error) {
+        String message = String.valueOf(error.getMessage()).toLowerCase(Locale.ROOT);
+        return message.contains("createprocess error=14001");
+    }
+
+    static String securitySoftwareHint(File updater, List<String> failures) {
+        return "自动更新器无法启动，可能被杀毒软件拦截、隔离，或正在接受延迟扫描。\n\n"
+                + "请在杀毒软件中恢复并允许这个文件，然后重新启动客户端：\n"
+                + updater.getAbsolutePath() + "\n\n"
+                + "MCUpdate 代码已在 GitHub 开源，可以审查代码后放心允许：\n"
+                + CLIENT_SOURCE_URL + "\n\n"
+                + "详细错误：\n" + String.join("\n", failures);
+    }
+
+    private static void showSecuritySoftwareHint(File updater, List<String> failures) {
+        String message = securitySoftwareHint(updater, failures);
+        if (GraphicsEnvironment.isHeadless()) {
+            System.err.println(message);
+            return;
+        }
+
+        JTextArea text = new JTextArea(message, 12, 56);
+        text.setEditable(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        text.setOpaque(false);
+        text.setFont(UIManager.getFont("Label.font"));
+
+        Object openSource = "查看开源代码";
+        Object close = "关闭";
+        JOptionPane pane = new JOptionPane(
+                text,
+                JOptionPane.ERROR_MESSAGE,
+                JOptionPane.DEFAULT_OPTION,
+                null,
+                new Object[] { openSource, close },
+                openSource);
+        JDialog dialog = pane.createDialog("自动更新器启动失败");
+        dialog.setAlwaysOnTop(true);
+        dialog.setVisible(true);
+        dialog.dispose();
+
+        if (openSource.equals(pane.getValue()) && Desktop.isDesktopSupported()) {
+            try {
+                Desktop.getDesktop().browse(URI.create(CLIENT_SOURCE_URL));
+            } catch (Exception error) {
+                System.err.println("failed to open MCUpdate source URL: " + error.getMessage());
             }
         }
     }

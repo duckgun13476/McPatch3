@@ -2,6 +2,7 @@ package mcpatch;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.util.List;
 
 public final class SelfUpdateRegression {
@@ -37,6 +38,20 @@ public final class SelfUpdateRegression {
             Mcpatch2Loader.removeOtherExecutables(candidates, fallback.toFile());
             if (!Files.exists(fallback) || Files.exists(older))
                 throw new AssertionError("post-success executable cleanup failed");
+
+            IOException sideBySide = new IOException("CreateProcess error=14001, invalid XML syntax");
+            if (!Mcpatch2Loader.isPossibleSecuritySoftwareInterference(sideBySide))
+                throw new AssertionError("Windows 14001 was not recognized");
+            if (Mcpatch2Loader.isPossibleSecuritySoftwareInterference(new IOException("CreateProcess error=2")))
+                throw new AssertionError("ordinary launch failure was misclassified");
+
+            String hint = Mcpatch2Loader.securitySoftwareHint(
+                    dir.resolve("AutoUpdateClient-new.exe").toFile(),
+                    List.of(sideBySide.getMessage()));
+            if (!hint.contains("杀毒软件")
+                    || !hint.contains("github.com/BalloonUpdate/Mcpatch2RustClient")
+                    || !hint.contains("AutoUpdateClient-new.exe"))
+                throw new AssertionError("security software hint lost actionable details");
 
             System.out.println("SELF_UPDATE_REGRESSION_OK");
         } finally {
