@@ -22,7 +22,7 @@ import javax.swing.UIManager;
 
 public class Mcpatch2Loader {
     private static final int UPDATE_BLOCKED_EXIT_CODE = 10;
-    private static final String CLIENT_SOURCE_URL = "https://github.com/BalloonUpdate/Mcpatch2RustClient";
+    private static final String CLIENT_SOURCE_URL = "https://github.com/duckgun13476/McPatch3";
     public static void main(String[] args) throws IOException, InterruptedException {
         entrance();
     }

@@ -49,7 +49,7 @@ public final class SelfUpdateRegression {
                     dir.resolve("AutoUpdateClient-new.exe").toFile(),
                     List.of(sideBySide.getMessage()));
             if (!hint.contains("杀毒软件")
-                    || !hint.contains("github.com/BalloonUpdate/Mcpatch2RustClient")
+                    || !hint.contains("github.com/duckgun13476/McPatch3")
                     || !hint.contains("AutoUpdateClient-new.exe"))
                 throw new AssertionError("security software hint lost actionable details");
 
