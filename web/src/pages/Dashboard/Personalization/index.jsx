@@ -21,11 +21,11 @@ const publicAsset = (path, revision) => path ? `${serverBase}/public/${path}?v=$
 const ImageField = ({title, hint, preview, onSelect, onRemove}) => (
   <div className="space-y-2">
     <div>
-      <div className="text-sm font-semibold text-[#243936]">{title}</div>
-      <div className="mt-1 text-xs text-[#6b7f7b]">{hint}</div>
+      <div className="text-sm font-semibold text-[#243936] dark:text-[#e5efec]">{title}</div>
+      <div className="mt-1 text-xs text-[#6b7f7b] dark:text-[#91a7a1]">{hint}</div>
     </div>
     <div className="flex items-center gap-3">
-      <div className="grid h-16 w-24 place-items-center overflow-hidden rounded-md border border-[#d7e3df] bg-[#eef4f2]">
+      <div className="grid h-16 w-24 place-items-center overflow-hidden rounded-md border border-[#d7e3df] bg-[#eef4f2] dark:border-[#344945] dark:bg-[#172320]">
         {preview ? <img src={preview} alt="" className="h-full w-full object-cover"/> : <Image size={22} className="text-[#82928f]"/>}
       </div>
       <Upload accept="image/png,image/gif,image/jpeg,image/webp" showUploadList={false} beforeUpload={file => { onSelect(file); return false }}>
@@ -113,18 +113,18 @@ const Index = () => {
     }
   }
 
-  if (!profile) return <div className="p-10 text-sm text-[#6b7f7b]">正在读取个性化配置...</div>
+  if (!profile) return <div className="p-10 text-sm text-[#6b7f7b] dark:text-[#91a7a1]">正在读取个性化配置...</div>
 
   const theme = profile.theme
   return (
     <>
       {contextHolder}
-      <main className="min-h-screen bg-[#f5f8f7] p-8 text-[#243936]">
+      <main className="min-h-screen bg-[#f5f8f7] p-8 text-[#243936] dark:bg-[#0f1715] dark:text-[#e5efec]">
         <div className="mx-auto max-w-[1280px]">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
               <h1 className="m-0 text-2xl font-semibold">个性化</h1>
-              <p className="mb-0 mt-2 text-sm text-[#6b7f7b]">配置会由自动更新器在下次启动时获取并缓存。</p>
+              <p className="mb-0 mt-2 text-sm text-[#6b7f7b] dark:text-[#91a7a1]">配置会由自动更新器在下次启动时获取并缓存。</p>
             </div>
             <div className="flex gap-2">
               <Button icon={<RotateCcw size={16}/>} onClick={() => { setProfile(original); setIconFile(undefined); setBackgroundFile(undefined) }}>撤销修改</Button>
@@ -162,22 +162,22 @@ const Index = () => {
               </div>
             </section>
 
-            <section className="space-y-6 rounded-lg border border-[#dce7e4] bg-white p-6">
+            <section className="space-y-6 rounded-lg border border-[#dce7e4] bg-white p-6 dark:border-[#2c403c] dark:bg-[#141d1b]">
               <div className="space-y-4">
                 <div className="text-sm font-semibold">显示内容</div>
-                <label className="block text-xs text-[#6b7f7b]">主标题<Input className="mt-2" value={profile.headline} maxLength={80} onChange={event => updateProfile('headline', event.target.value)}/></label>
-                <label className="block text-xs text-[#6b7f7b]">副标题<Input className="mt-2" value={profile.subtitle} maxLength={80} onChange={event => updateProfile('subtitle', event.target.value)}/></label>
-                <label className="block text-xs text-[#6b7f7b]">底部提示<Input className="mt-2" value={profile.footer} maxLength={80} onChange={event => updateProfile('footer', event.target.value)}/></label>
-                <label className="flex items-center justify-between text-xs text-[#6b7f7b]">启动文字水平偏移<InputNumber min={-24} max={24} value={profile.launchLabelOffsetX} onChange={value => updateProfile('launchLabelOffsetX', value ?? 0)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">主标题<Input className="mt-2" value={profile.headline} maxLength={80} onChange={event => updateProfile('headline', event.target.value)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">副标题<Input className="mt-2" value={profile.subtitle} maxLength={80} onChange={event => updateProfile('subtitle', event.target.value)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">底部提示<Input className="mt-2" value={profile.footer} maxLength={80} onChange={event => updateProfile('footer', event.target.value)}/></label>
+                <label className="flex items-center justify-between text-xs text-[#6b7f7b] dark:text-[#91a7a1]">启动文字水平偏移<InputNumber min={-24} max={24} value={profile.launchLabelOffsetX} onChange={value => updateProfile('launchLabelOffsetX', value ?? 0)}/></label>
               </div>
-              <div className="h-px bg-[#e5ecea]"/>
+              <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>
               <ImageField title="更新器图标" hint="支持 PNG、GIF、JPEG、WebP，最大 8 MiB。" preview={iconPreview} onSelect={setIconFile} onRemove={() => setIconFile(null)}/>
               <ImageField title="更新器背景图" hint="建议使用与窗口接近黄金比例的横向图片。" preview={backgroundPreview} onSelect={setBackgroundFile} onRemove={() => setBackgroundFile(null)}/>
-              <div className="h-px bg-[#e5ecea]"/>
+              <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>
               <div>
                 <div className="mb-3 text-sm font-semibold">配色</div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {themeFields.map(([key, label]) => <label key={key} className="flex items-center justify-between gap-2 text-xs text-[#536965]"><span>{label}</span><ColorPicker disabledAlpha size="small" value={theme[key]} onChange={color => updateTheme(key, color.toHexString())}/></label>)}
+                  {themeFields.map(([key, label]) => <label key={key} className="flex items-center justify-between gap-2 text-xs text-[#536965] dark:text-[#a7bbb6]"><span>{label}</span><ColorPicker disabledAlpha size="small" value={theme[key]} onChange={color => updateTheme(key, color.toHexString())}/></label>)}
                 </div>
               </div>
             </section>

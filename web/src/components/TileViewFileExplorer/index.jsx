@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import FileItem from "@/components/TileViewFileExplorer/FileItem/index.jsx";
 import './index.css'
 import {fsDeleteRequest, fsSignFileRequest} from "@/api/fs.js";
-import {message} from "antd";
+import {Button, message, Modal} from "antd";
 import {showFileSize, showTime} from "@/utils/tool.js";
 import {FileText, Folder} from "lucide-react";
 
@@ -12,6 +12,8 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
   const [menuPosition, setMenuPosition] = useState({x: 0, y: 0});
   const [isAnimating, setIsAnimating] = useState(false);
   const [selectedItem, setSelectedItem] = useState({})
+  const [preview, setPreview] = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const menuRef = useRef(null);
   const [messageApi, contextHolder] = message.useMessage();
 
@@ -41,25 +43,50 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
     };
   }, []);
 
-  const fsOpenOrDownload = async (item) => {
+  const signedFileUrl = async (item, previewMode = false) => {
+    let key = path.join('/');
+    key = key.length === 0 ? item.name : `${key}/${item.name}`
+    const {code, msg, data} = await fsSignFileRequest(key);
+    if (code !== 1) throw new Error(msg)
+    return `${import.meta.env.VITE_API_URL}/fs/extract-file?sign=${encodeURIComponent(data.signature)}${previewMode ? '&preview=1' : ''}`
+  }
+
+  const fsOpen = async (item) => {
     closeMenu()
     if (item.is_directory) {
       handlerNextPath(item)
-    } else {
-      let key = path.join('/');
-      key = key.length === 0 ? item.name : `${key}/${item.name}`
-
-      const {code, msg, data} = await fsSignFileRequest(key);
-      if (code === 1) {
-        const link = document.createElement('a');
-        link.href = `${import.meta.env.VITE_API_URL}/fs/extract-file?sign=${data.signature}`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        messageApi.error(msg);
-      }
+      return
     }
+    setPreviewLoading(true)
+    try {
+      setPreview({item, url: await signedFileUrl(item, true)})
+    } catch (error) {
+      messageApi.error(error.message || '无法打开文件预览')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const fsDownload = async (item) => {
+    closeMenu()
+    try {
+      const link = document.createElement('a');
+      link.href = await signedFileUrl(item);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      messageApi.error(error.message || '无法下载文件')
+    }
+  }
+
+  const previewKind = (name = '') => {
+    const extension = name.split('.').pop()?.toLowerCase()
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(extension)) return 'image'
+    if (['txt', 'log', 'md', 'toml', 'yml', 'yaml', 'properties', 'json', 'pdf'].includes(extension)) return 'frame'
+    if (['mp3', 'ogg', 'wav'].includes(extension)) return 'audio'
+    if (['mp4', 'webm'].includes(extension)) return 'video'
+    return 'unsupported'
   }
 
   const fsDelete = async (item) => {
@@ -101,7 +128,7 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
           {items.map((item, index) => (
             <div
               key={item.name}
-              onDoubleClick={() => fsOpenOrDownload(item)}
+              onDoubleClick={() => fsOpen(item)}
               onContextMenu={(e) => handleContextMenu(e, index)} onClick={closeMenu}>
               <FileItem item={item}/>
             </div>
@@ -116,7 +143,7 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
             <div
               key={item.name}
               className="grid h-11 cursor-pointer grid-cols-[minmax(240px,1fr)_110px_110px_180px] items-center border-b border-[#e7efed] px-3 text-gray-700 hover:bg-teal-50/70 dark:border-[#263532] dark:text-gray-200 dark:hover:bg-teal-950/30"
-              onDoubleClick={() => fsOpenOrDownload(item)}
+              onDoubleClick={() => fsOpen(item)}
               onContextMenu={(e) => handleContextMenu(e, index)}
               onClick={closeMenu}>
               <div className="flex min-w-0 items-center gap-2">
@@ -158,7 +185,7 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
                 selectedItem.is_directory &&
                 <>
                   <button
-                    onClick={() => fsOpenOrDownload(selectedItem)}
+                    onClick={() => fsOpen(selectedItem)}
                     className="flex w-full items-center rounded-md p-2 text-sm text-teal-700 duration-200 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/30">
                     打开
                   </button>
@@ -168,7 +195,12 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
                 !selectedItem.is_directory &&
                 <>
                   <button
-                    onClick={() => fsOpenOrDownload(selectedItem)}
+                    onClick={() => fsOpen(selectedItem)}
+                    className="flex w-full items-center rounded-md p-2 text-sm text-teal-700 duration-200 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/30">
+                    预览
+                  </button>
+                  <button
+                    onClick={() => fsDownload(selectedItem)}
                     className="flex w-full items-center rounded-md p-2 text-sm text-teal-700 duration-200 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/30">
                     下载
                   </button>
@@ -184,6 +216,23 @@ const Index = ({path, getFileList, items, handlerNextPath, viewMode = 'grid'}) =
             </div>
           </div> : <></>
       }
+      <Modal
+        title={preview?.item?.name || '文件预览'}
+        open={Boolean(preview) || previewLoading}
+        width="min(1000px, 88vw)"
+        centered
+        loading={previewLoading}
+        onCancel={() => setPreview(null)}
+        footer={preview ? [
+          <Button key="download" onClick={() => fsDownload(preview.item)}>下载</Button>,
+          <Button key="close" type="primary" onClick={() => setPreview(null)}>关闭</Button>
+        ] : null}>
+        {preview && previewKind(preview.item.name) === 'image' && <div className="grid min-h-80 place-items-center rounded-md bg-gray-100 p-4 dark:bg-gray-950"><img src={preview.url} alt={preview.item.name} className="max-h-[65vh] max-w-full object-contain"/></div>}
+        {preview && previewKind(preview.item.name) === 'frame' && <iframe title={preview.item.name} src={preview.url} className="h-[65vh] w-full rounded-md border border-gray-200 bg-white dark:border-gray-700"/>}
+        {preview && previewKind(preview.item.name) === 'audio' && <div className="grid min-h-48 place-items-center"><audio controls src={preview.url} className="w-full"/></div>}
+        {preview && previewKind(preview.item.name) === 'video' && <video controls src={preview.url} className="max-h-[65vh] w-full rounded-md bg-black"/>}
+        {preview && previewKind(preview.item.name) === 'unsupported' && <div className="grid min-h-48 place-items-center rounded-md border border-dashed border-gray-300 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">此文件类型无法在线预览，可使用下方按钮下载。</div>}
+      </Modal>
     </>
   );
 };

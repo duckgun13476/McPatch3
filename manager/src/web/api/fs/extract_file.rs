@@ -71,15 +71,60 @@ pub async fn api_extract_file(State(state): State<WebState>, Query(params): Quer
 
     let file = tokio_util::io::ReaderStream::new(file);
 
+    let preview = params.get("preview").is_some_and(|value| value == "1");
+    let content_type = if preview {
+        preview_content_type(&path)
+    } else {
+        "application/octet-stream"
+    };
+    let disposition = if preview { "inline" } else { "attachment" };
+
     Response::builder()
-        .header(axum::http::header::CONTENT_TYPE, "application/octet-stream")
-        .header(axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", path.filename()))
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .header(axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(axum::http::header::CONTENT_DISPOSITION, format!("{disposition}; filename=\"{}\"", path.filename()))
         .header(axum::http::header::CONTENT_LENGTH, format!("{}", metadata.len()))
         .body(Body::from_stream(file)).unwrap()
+}
+
+fn preview_content_type(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("txt") | Some("log") | Some("md") | Some("toml") | Some("yml") | Some("yaml") | Some("properties") => "text/plain; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("pdf") => "application/pdf",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("wav") => "audio/wav",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        _ => "application/octet-stream",
+    }
 }
 
 fn hash(text: &impl AsRef<str>) -> String {
     let hash = Sha256::digest(text.as_ref());
     
     base16ct::lower::encode_string(&hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::preview_content_type;
+
+    #[test]
+    fn preview_only_assigns_safe_inline_types() {
+        assert_eq!(preview_content_type(Path::new("notice.md")), "text/plain; charset=utf-8");
+        assert_eq!(preview_content_type(Path::new("image.png")), "image/png");
+        assert_eq!(preview_content_type(Path::new("manual.pdf")), "application/pdf");
+        assert_eq!(preview_content_type(Path::new("page.html")), "application/octet-stream");
+        assert_eq!(preview_content_type(Path::new("icon.svg")), "application/octet-stream");
+        assert_eq!(preview_content_type(Path::new("mod.jar")), "application/octet-stream");
+    }
 }
