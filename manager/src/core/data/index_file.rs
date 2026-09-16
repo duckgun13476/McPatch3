@@ -40,6 +40,9 @@ pub struct VersionIndex {
 
     /// 整个tar包文件的校验
     pub hash: String,
+
+    /// 合并前该版本独立归档的大小；旧索引没有此字段。
+    pub archive_size: Option<u64>,
 }
 
 /// 代表一个索引文件
@@ -72,8 +75,9 @@ impl IndexFile {
             let offset = v["offset"].as_u64().unwrap();
             let len = v["length"].as_u64().unwrap();
             let hash = v["hash"].as_str().unwrap().to_owned();
+            let archive_size = v["archive-size"].as_u64();
 
-            versions.push(VersionIndex { label, filename, len, offset, hash })
+            versions.push(VersionIndex { label, filename, len, offset, hash, archive_size })
         }
 
         Self { versions }
@@ -91,6 +95,9 @@ impl IndexFile {
             obj.insert("offset", v.offset).unwrap();
             obj.insert("length", v.len).unwrap();
             obj.insert("hash", v.hash.to_owned()).unwrap();
+            if let Some(archive_size) = v.archive_size {
+                obj.insert("archive-size", archive_size).unwrap();
+            }
             
             root.push(obj).unwrap();
         }
@@ -190,6 +197,45 @@ impl IndexFile {
         let mut meta = meta.clone();
         meta.label = index.label.clone();
         Some((index, meta))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IndexFile, VersionIndex};
+
+    #[test]
+    fn legacy_index_without_archive_size_remains_compatible() {
+        let index = IndexFile::load_from_json(
+            r#"[{"label":"v1","filename":"v1.tar","offset":512,"length":42,"hash":"no hash"}]"#,
+        );
+
+        assert_eq!(index.find("v1").unwrap().archive_size, None);
+    }
+
+    #[test]
+    fn archive_size_round_trips_through_index_json() {
+        let mut index = IndexFile::new();
+        index.add(VersionIndex {
+            label: "v2".to_owned(),
+            filename: "combined.tar".to_owned(),
+            offset: 1024,
+            len: 64,
+            hash: "a".repeat(64),
+            archive_size: Some(123_456),
+        });
+
+        let path = std::env::temp_dir().join(format!(
+            "mcupdate-index-archive-size-{}.json",
+            std::process::id()
+        ));
+        index.save(&path);
+        let loaded = IndexFile::load_from_file(&path);
+        std::fs::remove_file(path).unwrap();
+
+        let version = loaded.find("v2").unwrap();
+        assert_eq!(version.archive_size, Some(123_456));
+        assert_eq!(version.hash, "a".repeat(64));
     }
 }
 

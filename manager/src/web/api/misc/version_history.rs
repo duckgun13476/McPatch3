@@ -66,9 +66,11 @@ pub async fn api_version_history(
             let (index, meta) = index_file
                 .read_meta(&apppath.public_dir, &label)
                 .ok_or_else(|| "找不到指定版本".to_owned())?;
-            let archive_size = std::fs::metadata(apppath.public_dir.join(&index.filename))
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+            let archive_size = index.archive_size.unwrap_or_else(|| {
+                std::fs::metadata(apppath.public_dir.join(&index.filename))
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0)
+            });
             Ok::<_, String>(history_response(
                 index.filename,
                 index.hash,

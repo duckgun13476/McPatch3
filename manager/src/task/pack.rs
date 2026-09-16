@@ -538,12 +538,15 @@ pub fn task_pack_selected(
         client_hash_deletions,
     );
     let meta_info = writer.finish(VersionMetaGroup::with_one(meta));
+    let archive_size = std::fs::metadata(&version_file).unwrap().len();
+    let archive_hash = calculate_sha256(&mut std::fs::File::open(&version_file).unwrap());
     index_file.add(VersionIndex {
         label: version_label.clone(),
         filename: version_filename,
         offset: meta_info.offset,
         len: meta_info.length,
-        hash: "no hash".to_owned(),
+        hash: archive_hash,
+        archive_size: Some(archive_size),
     });
 
     console.log_debug("正在测试");

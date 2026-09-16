@@ -9,6 +9,7 @@ use crate::core::data::index_file::IndexFile;
 use crate::core::data::index_file::VersionIndex;
 use crate::core::data::version_meta::FileChange;
 use crate::core::data::version_meta_group::VersionMetaGroup;
+use crate::core::file_hash::calculate_sha256;
 use crate::core::tar_reader::TarReader;
 use crate::core::tar_writer::TarWriter;
 use crate::diff::history_file::HistoryFile;
@@ -36,6 +37,24 @@ struct Location {
 
 pub fn task_combine(apppath: &AppPath, _config: &Config, console: &Console) -> u8 {
     let index_file = IndexFile::load_from_file(&apppath.index_file);
+
+    // Capture each source archive before combined.tar is replaced and the
+    // standalone archives are removed. Existing recorded facts take priority.
+    let mut archive_facts = HashMap::<String, (String, u64)>::new();
+    for index in &index_file {
+        let facts = archive_facts.entry(index.filename.clone()).or_insert_with(|| {
+            let path = apppath.public_dir.join(&index.filename);
+            let size = std::fs::metadata(&path).unwrap().len();
+            let hash = calculate_sha256(&mut std::fs::File::open(path).unwrap());
+            (hash, size)
+        });
+        if index.hash != "no hash" {
+            facts.0 = index.hash.clone();
+        }
+        if let Some(size) = index.archive_size {
+            facts.1 = size;
+        }
+    }
 
     // 执行合并前需要先测试一遍
     console.log_debug("正在执行合并前的解压测试");
@@ -128,12 +147,14 @@ pub fn task_combine(apppath: &AppPath, _config: &Config, console: &Console) -> u
     let new_index_filepath = temp_public.join("index.json");
     let mut new_index = IndexFile::new();
     for (index, _meta) in index_file.read_all_metas(&apppath.public_dir) {
+        let (archive_hash, archive_size) = archive_facts.get(&index.filename).unwrap();
         new_index.add(VersionIndex {
             label: index.label.to_owned(),
             filename: COMBINED_FILENAME.to_owned(),
             offset: meta_loc.offset,
             len: meta_loc.length,
-            hash: "no hash".to_owned(),
+            hash: if index.hash == "no hash" { archive_hash.clone() } else { index.hash },
+            archive_size: Some(index.archive_size.unwrap_or(*archive_size)),
         })
     }
     new_index.save(&new_index_filepath);
@@ -180,4 +201,87 @@ pub fn task_combine(apppath: &AppPath, _config: &Config, console: &Console) -> u
     // generate_upload_script(context, ctx, "combined");
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::LinkedList;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::{task_combine, COMBINED_FILENAME};
+    use crate::app_path::AppPath;
+    use crate::config::Config;
+    use crate::core::data::index_file::{IndexFile, VersionIndex};
+    use crate::core::data::version_meta::VersionMeta;
+    use crate::core::data::version_meta_group::VersionMetaGroup;
+    use crate::core::file_hash::calculate_sha256;
+    use crate::core::tar_writer::TarWriter;
+    use crate::web::log::Console;
+
+    #[test]
+    fn combine_preserves_each_original_archive_hash_and_size() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mcupdate-combine-history-{}-{nonce}",
+            std::process::id()
+        ));
+        let public_dir = root.join("public");
+        std::fs::create_dir_all(&public_dir).unwrap();
+        let apppath = AppPath {
+            working_dir: root.clone(),
+            workspace_dir: root.join("workspace"),
+            public_dir: public_dir.clone(),
+            web_dir: root.join("webpage"),
+            index_file: public_dir.join("index.json"),
+            ui_profile_file: public_dir.join("ui-profile.json"),
+            pending_changes_file: root.join("pending-changes.json"),
+            config_file: root.join("config.toml"),
+            auth_file: root.join("user.toml"),
+        };
+
+        let mut index = IndexFile::new();
+        let mut expected = Vec::new();
+        for (label, logs) in [("v1", "first"), ("v2", "second version with more text")] {
+            let filename = format!("{label}.tar");
+            let path = public_dir.join(&filename);
+            let writer = TarWriter::new(&path);
+            let meta = VersionMeta::new(
+                label.to_owned(),
+                logs.to_owned(),
+                LinkedList::new(),
+                Vec::new(),
+            );
+            let location = writer.finish(VersionMetaGroup::with_one(meta));
+            let size = std::fs::metadata(&path).unwrap().len();
+            let hash = calculate_sha256(&mut std::fs::File::open(&path).unwrap());
+            expected.push((label.to_owned(), hash, size));
+            index.add(VersionIndex {
+                label: label.to_owned(),
+                filename,
+                offset: location.offset,
+                len: location.length,
+                hash: "no hash".to_owned(),
+                archive_size: None,
+            });
+        }
+        index.save(&apppath.index_file);
+
+        assert_eq!(task_combine(&apppath, &Config::default(), &Console::new_cli()), 0);
+
+        let combined = IndexFile::load_from_file(&apppath.index_file);
+        for (label, hash, size) in expected {
+            let version = combined.find(&label).unwrap();
+            assert_eq!(version.filename, COMBINED_FILENAME);
+            assert_eq!(version.hash, hash);
+            assert_eq!(version.archive_size, Some(size));
+        }
+        assert!(public_dir.join(COMBINED_FILENAME).is_file());
+        assert!(!public_dir.join("v1.tar").exists());
+        assert!(!public_dir.join("v2.tar").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
