@@ -1,4 +1,8 @@
 export const nextPatchVersion = (label) => {
+  if (label === undefined || label === null || label === '') {
+    return 'v0.0.1'
+  }
+
   if (typeof label !== 'string' || /\s/.test(label)) {
     return ''
   }
