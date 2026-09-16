@@ -340,12 +340,7 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
         // a disposable connection so unread image bytes can never poison update traffic.
         let mut profile_network =
             Network::new(&config).be(|e| format!("服务器地址加载失败，原因：{:?}", e))?;
-        if let Ok(Some(profile)) = tokio::time::timeout(
-            Duration::from_secs(2),
-            ui_profile::refresh(&mut profile_network, &working_dir),
-        )
-        .await
-        {
+        if let Some(profile) = ui_profile::refresh(&mut profile_network, &working_dir).await {
             ui_cmd.set_profile(profile).await;
             log_info("refreshed updater UI profile from update source");
         }

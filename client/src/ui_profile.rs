@@ -2,6 +2,8 @@ use std::path::Path;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 use crate::log::log_warning;
 use crate::network::Network;
@@ -13,6 +15,8 @@ const MAX_ICON_BYTES: usize = 3 * 1024 * 1024;
 const MAX_ICON_DATA_URL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_BACKGROUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BACKGROUND_DATA_URL_BYTES: usize = 11 * 1024 * 1024;
+const PROFILE_TIMEOUT: Duration = Duration::from_secs(2);
+const ASSET_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -31,8 +35,12 @@ pub struct UiProfile {
     pub traffic_color: String,
     pub launch_label_offset_x: i8,
     pub icon: String,
+    #[serde(default)]
+    pub icon_sha256: String,
     pub icon_data_url: String,
     pub background_image: String,
+    #[serde(default)]
+    pub background_sha256: String,
     pub background_data_url: String,
     pub stages: StageLabels,
     pub theme: ThemeColors,
@@ -103,8 +111,10 @@ impl Default for UiProfile {
             traffic_color: ThemeColors::default().text,
             launch_label_offset_x: 2,
             icon: String::new(),
+            icon_sha256: String::new(),
             icon_data_url: data_url(include_bytes!("../app-icon.png")).unwrap_or_default(),
             background_image: String::new(),
+            background_sha256: String::new(),
             background_data_url: String::new(),
             stages: StageLabels::default(),
             theme: ThemeColors::default(),
@@ -134,55 +144,98 @@ pub async fn load_cached(working_dir: &Path) -> Option<UiProfile> {
 
 pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<UiProfile> {
     let cached = load_cached(working_dir).await.unwrap_or_default();
-    let text = network
-        .request_text(PROFILE_PATH, 0..0, "updater UI profile")
-        .await
-        .ok()?;
+    let text = tokio::time::timeout(
+        PROFILE_TIMEOUT,
+        network.request_text(PROFILE_PATH, 0..0, "updater UI profile"),
+    )
+    .await
+    .ok()?
+    .ok()?;
     let mut profile = validate_profile(serde_json::from_str::<UiProfile>(&text).ok()?)?;
 
     if !profile.icon.is_empty() {
-        profile.icon_data_url = cached.icon_data_url;
-        match network
-            .request_bytes(&profile.icon, "updater UI icon", MAX_ICON_BYTES)
-            .await
-        {
-            Ok(icon) => match data_url(&icon) {
-                Some(encoded) if encoded.len() <= MAX_ICON_DATA_URL_BYTES => {
-                    profile.icon_data_url = encoded;
+        if cached_asset_matches(
+            &profile.icon_sha256,
+            &cached.icon_sha256,
+            &cached.icon_data_url,
+        ) {
+            profile.icon_data_url = cached.icon_data_url;
+        } else {
+            profile.icon_data_url = cached.icon_data_url;
+            let mut updated = false;
+            let result = tokio::time::timeout(
+                ASSET_TIMEOUT,
+                network.request_bytes(&profile.icon, "updater UI icon", MAX_ICON_BYTES),
+            )
+            .await;
+            match result {
+                Ok(Ok(icon)) if asset_hash_matches(&icon, &profile.icon_sha256) => {
+                    match data_url(&icon) {
+                        Some(encoded) if encoded.len() <= MAX_ICON_DATA_URL_BYTES => {
+                            profile.icon_data_url = encoded;
+                            updated = true;
+                        }
+                        Some(_) => log_warning("远端更新器图标编码后超过 4 MiB，继续使用缓存图标"),
+                        None => log_warning("远端更新器图标格式不受支持，继续使用缓存图标"),
+                    }
                 }
-                Some(_) => log_warning("远端更新器图标编码后超过 4 MiB，继续使用缓存图标"),
-                None => log_warning("远端更新器图标格式不受支持，继续使用缓存图标"),
-            },
-            Err(error) => {
-                log_warning(format!(
+                Ok(Ok(_)) => log_warning("远端更新器图标哈希不匹配，继续使用缓存图标"),
+                Ok(Err(error)) => log_warning(format!(
                     "远端更新器图标加载失败，继续使用缓存图标：{}",
                     error.reason
-                ));
+                )),
+                Err(_) => log_warning("远端更新器图标下载超时，继续使用缓存图标"),
+            }
+            if !updated {
+                profile.icon_sha256 = cached.icon_sha256;
             }
         }
     }
 
     if !profile.background_image.is_empty() {
-        profile.background_data_url = cached.background_data_url;
-        match network
-            .request_bytes(
-                &profile.background_image,
-                "updater UI background",
-                MAX_BACKGROUND_BYTES,
+        if cached_asset_matches(
+            &profile.background_sha256,
+            &cached.background_sha256,
+            &cached.background_data_url,
+        ) {
+            profile.background_data_url = cached.background_data_url;
+        } else {
+            profile.background_data_url = cached.background_data_url;
+            let mut updated = false;
+            let result = tokio::time::timeout(
+                ASSET_TIMEOUT,
+                network.request_bytes(
+                    &profile.background_image,
+                    "updater UI background",
+                    MAX_BACKGROUND_BYTES,
+                ),
             )
-            .await
-        {
-            Ok(background) => match data_url(&background) {
-                Some(encoded) if encoded.len() <= MAX_BACKGROUND_DATA_URL_BYTES => {
-                    profile.background_data_url = encoded;
+            .await;
+            match result {
+                Ok(Ok(background))
+                    if asset_hash_matches(&background, &profile.background_sha256) =>
+                {
+                    match data_url(&background) {
+                        Some(encoded) if encoded.len() <= MAX_BACKGROUND_DATA_URL_BYTES => {
+                            profile.background_data_url = encoded;
+                            updated = true;
+                        }
+                        Some(_) => {
+                            log_warning("远端更新器背景图编码后超过 11 MiB，继续使用缓存背景图")
+                        }
+                        None => log_warning("远端更新器背景图格式不受支持，继续使用缓存背景图"),
+                    }
                 }
-                Some(_) => log_warning("远端更新器背景图编码后超过 11 MiB，继续使用缓存背景图"),
-                None => log_warning("远端更新器背景图格式不受支持，继续使用缓存背景图"),
-            },
-            Err(error) => log_warning(format!(
-                "远端更新器背景图加载失败，继续使用缓存背景图：{}",
-                error.reason
-            )),
+                Ok(Ok(_)) => log_warning("远端更新器背景图哈希不匹配，继续使用缓存背景图"),
+                Ok(Err(error)) => log_warning(format!(
+                    "远端更新器背景图加载失败，继续使用缓存背景图：{}",
+                    error.reason
+                )),
+                Err(_) => log_warning("远端更新器背景图下载超时，继续使用缓存背景图"),
+            }
+            if !updated {
+                profile.background_sha256 = cached.background_sha256;
+            }
         }
     }
 
@@ -190,6 +243,17 @@ pub async fn refresh(network: &mut Network<'_>, working_dir: &Path) -> Option<Ui
     let serialized = serde_json::to_vec(&profile).ok()?;
     let _ = tokio::fs::write(working_dir.join(CACHE_FILE), serialized).await;
     Some(profile)
+}
+
+fn cached_asset_matches(remote_hash: &str, cached_hash: &str, cached_data_url: &str) -> bool {
+    !remote_hash.is_empty()
+        && remote_hash.eq_ignore_ascii_case(cached_hash)
+        && !cached_data_url.is_empty()
+}
+
+fn asset_hash_matches(bytes: &[u8], expected_hash: &str) -> bool {
+    expected_hash.is_empty()
+        || format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected_hash)
 }
 
 fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
@@ -248,6 +312,11 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
     if !profile.background_image.is_empty() && !safe_asset_path(&profile.background_image) {
         return None;
     }
+    if !valid_optional_sha256(&profile.icon_sha256)
+        || !valid_optional_sha256(&profile.background_sha256)
+    {
+        return None;
+    }
     if !profile.icon_data_url.is_empty()
         && (!profile.icon_data_url.starts_with("data:image/")
             || profile.icon_data_url.len() > MAX_ICON_DATA_URL_BYTES)
@@ -272,6 +341,10 @@ fn valid_color(value: &str) -> bool {
     value.len() == 7
         && value.starts_with('#')
         && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn valid_optional_sha256(value: &str) -> bool {
+    value.is_empty() || value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn safe_asset_path(path: &str) -> bool {
@@ -376,5 +449,34 @@ mod tests {
             "A".repeat(MAX_ICON_DATA_URL_BYTES)
         );
         assert!(validate_profile(profile).is_none());
+    }
+
+    #[test]
+    fn reuses_only_matching_nonempty_asset_cache() {
+        let hash = format!("{:x}", Sha256::digest(b"asset"));
+        assert!(cached_asset_matches(
+            &hash,
+            &hash.to_ascii_uppercase(),
+            "data:image/png;base64,fixture"
+        ));
+        assert!(!cached_asset_matches(
+            &hash,
+            &"0".repeat(64),
+            "data:image/png;base64,fixture"
+        ));
+        assert!(!cached_asset_matches(&hash, &hash, ""));
+        assert!(!cached_asset_matches(
+            "",
+            "",
+            "data:image/png;base64,fixture"
+        ));
+    }
+
+    #[test]
+    fn verifies_downloaded_asset_hash_when_server_provides_one() {
+        let hash = format!("{:x}", Sha256::digest(b"asset"));
+        assert!(asset_hash_matches(b"asset", &hash));
+        assert!(asset_hash_matches(b"legacy", ""));
+        assert!(!asset_hash_matches(b"different", &hash));
     }
 }
