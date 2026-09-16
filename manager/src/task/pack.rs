@@ -437,6 +437,51 @@ pub fn task_pack(
     code
 }
 
+pub fn task_pack_updater(
+    version_label: String,
+    change_logs: String,
+    apppath: &AppPath,
+    config: &Config,
+    console: &Console,
+) -> u8 {
+    let pending = match PendingChanges::load(&apppath.pending_changes_file) {
+        Ok(state) => state,
+        Err(error) => {
+            console.log_error(error);
+            return 1;
+        }
+    };
+    let plan = match build_pack_plan(
+        &version_label,
+        &change_logs,
+        apppath,
+        config,
+        &pending,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            console.log_error(error);
+            return 1;
+        }
+    };
+    let selection = match select_updater_self_update(plan) {
+        Ok(selection) => selection,
+        Err(error) => {
+            console.log_error(error);
+            return 1;
+        }
+    };
+    task_pack_selected(
+        version_label,
+        change_logs,
+        selection.changes,
+        selection.hash_deletions,
+        apppath,
+        config,
+        console,
+    )
+}
+
 pub fn cleanup_hash_delete_staging(
     apppath: &AppPath,
     staged_files: Vec<String>,

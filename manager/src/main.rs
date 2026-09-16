@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::core::bootstrap_resolver::resolve_from_stdio;
 use crate::task::check::task_check;
 use crate::task::combine::task_combine;
-use crate::task::pack::{load_one_shot_hash_deletions, task_pack};
+use crate::task::pack::{load_one_shot_hash_deletions, task_pack, task_pack_updater};
 use crate::task::revert::task_revert;
 use crate::task::test::task_test;
 use crate::web::log::Console;
@@ -46,6 +46,16 @@ enum Commands {
         /// 仅用于本次更新包的精确路径哈希删除清单
         #[arg(long)]
         hash_deletions_file: Option<PathBuf>,
+    },
+
+    /// 只打包更新器 EXE 与启动清单，保留工作区其他修改
+    PackUpdater {
+        /// 指定新的版本号
+        version_label: String,
+
+        /// 更新日志
+        #[arg(long, default_value = "更新自动更新器")]
+        change_logs: String,
     },
 
     /// 检查工作空间的文件修改情况
@@ -151,6 +161,10 @@ async fn handle_command(apppath: &AppPath, config: &Config, console: &Console, c
                 console,
             )
         }
+        Commands::PackUpdater {
+            version_label,
+            change_logs,
+        } => task_pack_updater(version_label, change_logs, apppath, config, console),
         Commands::Check => task_check(apppath, config, console),
         Commands::Combine => task_combine(apppath, config, console),
         Commands::Test => task_test(apppath, config, console),
