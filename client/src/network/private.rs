@@ -225,6 +225,14 @@ impl AsyncRead for PrivatePartialAsyncRead {
     }
 }
 
+impl Drop for PrivatePartialAsyncRead {
+    fn drop(&mut self) {
+        if self.1 != 0 {
+            *self.0 = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +315,42 @@ mod tests {
         let mut retry_text = String::new();
         retry_body.read_to_string(&mut retry_text).await.unwrap();
         assert_eq!(retry_text, "index");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discards_connection_when_response_body_is_abandoned() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            read_request(&mut first).await;
+            send_response(&mut first, b"unfinished-profile").await;
+
+            let (mut second, _) = listener.accept().await.unwrap();
+            read_request(&mut second).await;
+            send_response(&mut second, b"index").await;
+        });
+
+        let config = test_config();
+        let mut protocol = PrivateProtocol::new(&addr.to_string(), &config, 0);
+
+        let (_, first_body) = protocol
+            .request("assets/updater.png", &(0..0), "profile icon", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(first_body);
+        assert!(protocol.tcp_stream.lock().await.is_none());
+
+        let (_, mut index_body) = protocol
+            .request("index.json", &(0..0), "index", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut index_text = String::new();
+        index_body.read_to_string(&mut index_text).await.unwrap();
+        assert_eq!(index_text, "index");
         server.await.unwrap();
     }
 }

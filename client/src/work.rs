@@ -335,14 +335,20 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
 
     // UI资料从同一个更新源读取：缓存立即显示，服务端资料最多等待两秒且失败不影响更新。
     #[cfg(target_os = "windows")]
-    if let Ok(Some(profile)) = tokio::time::timeout(
-        Duration::from_secs(2),
-        ui_profile::refresh(&mut network, &working_dir),
-    )
-    .await
     {
-        ui_cmd.set_profile(profile).await;
-        log_info("refreshed updater UI profile from update source");
+        // A timeout may cancel an asset response halfway through. Keep profile traffic on
+        // a disposable connection so unread image bytes can never poison update traffic.
+        let mut profile_network =
+            Network::new(&config).be(|e| format!("服务器地址加载失败，原因：{:?}", e))?;
+        if let Ok(Some(profile)) = tokio::time::timeout(
+            Duration::from_secs(2),
+            ui_profile::refresh(&mut profile_network, &working_dir),
+        )
+        .await
+        {
+            ui_cmd.set_profile(profile).await;
+            log_info("refreshed updater UI profile from update source");
+        }
     }
 
     crate::bootstrap::initialize(
