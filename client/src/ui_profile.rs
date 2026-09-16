@@ -27,6 +27,8 @@ pub struct UiProfile {
     pub subtitle_color: String,
     #[serde(default)]
     pub footer_color: String,
+    #[serde(default)]
+    pub traffic_color: String,
     pub launch_label_offset_x: i8,
     pub icon: String,
     pub icon_data_url: String,
@@ -98,6 +100,7 @@ impl Default for UiProfile {
             headline_color: ThemeColors::default().text,
             subtitle_color: ThemeColors::default().muted,
             footer_color: ThemeColors::default().muted,
+            traffic_color: ThemeColors::default().text,
             launch_label_offset_x: 2,
             icon: String::new(),
             icon_data_url: data_url(include_bytes!("../app-icon.png")).unwrap_or_default(),
@@ -206,6 +209,9 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
     if profile.footer_color.is_empty() {
         profile.footer_color = profile.theme.muted.clone();
     }
+    if profile.traffic_color.is_empty() {
+        profile.traffic_color = profile.theme.text.clone();
+    }
     for value in [
         &profile.stages.prepare,
         &profile.stages.checking,
@@ -230,6 +236,7 @@ fn validate_profile(mut profile: UiProfile) -> Option<UiProfile> {
         &profile.headline_color,
         &profile.subtitle_color,
         &profile.footer_color,
+        &profile.traffic_color,
     ] {
         if !valid_color(color) {
             return None;
@@ -344,6 +351,7 @@ mod tests {
         assert_eq!(profile.headline_color, "#112233");
         assert_eq!(profile.subtitle_color, "#445566");
         assert_eq!(profile.footer_color, "#445566");
+        assert_eq!(profile.traffic_color, "#112233");
     }
 
     #[test]

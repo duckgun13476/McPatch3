@@ -43,7 +43,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <style>
-  :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; --accent: #147d67; --accent-hover: #106b59; --accent-soft: #dff2eb; --background: #f4f7f6; --surface: #ffffff; --log-background: #f7faf9; --text: #16332d; --muted: #648078; --border: #e2ebe8; --headline-text: #16332d; --subtitle-text: #648078; --footer-text: #648078; --launch-label-offset-x: 2px; }
+  :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; --accent: #147d67; --accent-hover: #106b59; --accent-soft: #dff2eb; --background: #f4f7f6; --surface: #ffffff; --log-background: #f7faf9; --text: #16332d; --muted: #648078; --border: #e2ebe8; --headline-text: #16332d; --subtitle-text: #648078; --footer-text: #648078; --traffic-text: #16332d; --launch-label-offset-x: 2px; }
   * { box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; border-radius: 12px; }
   html { background: transparent; }
@@ -129,8 +129,8 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .traffic-stat { width: 100%; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 10px; padding: 3px 16px; border-left: 2px solid var(--accent-soft); text-align: left; }
   .traffic-symbol { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); font-size: 20px; font-weight: 800; line-height: 1; }
   .traffic-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-  .traffic-label { flex: 0 0 auto; color: var(--muted); font-size: 12px; font-weight: 700; }
-  #trafficValue { min-width: 0; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .traffic-label { flex: 0 0 auto; color: var(--traffic-text); font-size: 12px; font-weight: 700; }
+  #trafficValue { min-width: 0; color: var(--traffic-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   #completeButton { display: none; width: 100%; height: 52px; padding: 0 9px; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; border: 0; border-radius: 26px; background: var(--accent); color: #fff; font: 700 15px "Microsoft YaHei UI", "Segoe UI", sans-serif; cursor: pointer; }
   .foot.complete #completeButton { display: grid; }
   #completeButton::after { content: ""; width: 34px; height: 34px; }
@@ -187,13 +187,14 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('bar').style.width = percent + '%';
     document.getElementById('trafficValue').textContent = traffic;
   };
-  window.updateProfile = ({ headline, subtitle, footer, headlineColor, subtitleColor, footerColor, iconDataUrl, backgroundDataUrl, launchLabelOffsetX, theme }) => {
+  window.updateProfile = ({ headline, subtitle, footer, headlineColor, subtitleColor, footerColor, trafficColor, iconDataUrl, backgroundDataUrl, launchLabelOffsetX, theme }) => {
     document.getElementById('headline').textContent = headline;
     document.getElementById('subtitle').textContent = subtitle;
     document.getElementById('footer').textContent = footer;
     document.documentElement.style.setProperty('--headline-text', headlineColor);
     document.documentElement.style.setProperty('--subtitle-text', subtitleColor);
     document.documentElement.style.setProperty('--footer-text', footerColor);
+    document.documentElement.style.setProperty('--traffic-text', trafficColor);
     const launchOffset = Math.max(-24, Math.min(24, Number(launchLabelOffsetX) || 0));
     document.documentElement.style.setProperty('--launch-label-offset-x', launchOffset + 'px');
     const mark = document.getElementById('mark');
@@ -1031,6 +1032,7 @@ impl MainWindow {
             "headlineColor": &profile.headline_color,
             "subtitleColor": &profile.subtitle_color,
             "footerColor": &profile.footer_color,
+            "trafficColor": &profile.traffic_color,
             "launchLabelOffsetX": profile.launch_label_offset_x,
             "iconDataUrl": &profile.icon_data_url,
             "backgroundDataUrl": &profile.background_data_url,
@@ -1316,7 +1318,7 @@ mod tests {
     fn updater_version_is_injected_into_the_visible_header() {
         assert!(UPDATE_PAGE.contains("id=\"appVersion\""));
         let rendered = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
-        assert!(rendered.contains("v0.0.2"));
+        assert!(rendered.contains("v0.0.3"));
         assert!(!rendered.contains("{{APP_VERSION}}"));
     }
 
