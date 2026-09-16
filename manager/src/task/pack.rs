@@ -325,19 +325,52 @@ pub fn select_pack_changes(
 /// Select only the immutable updater binary and its coupled start list.
 /// Other workspace and pending changes remain untouched for a later package.
 pub fn select_updater_self_update(plan: PackPlan) -> Result<PackSelection, String> {
-    if plan.required_change_ids.is_empty() {
+    if plan.required_change_ids.len() != 2 {
         return Err("更新器内容没有变化，无需生成更新包".to_owned());
     }
+    let required_paths = plan
+        .changes
+        .iter()
+        .filter(|change| plan.required_change_ids.contains(&change_id(change)))
+        .filter_map(change_path)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let required_folder_ids = plan
+        .changes
+        .iter()
+        .filter_map(|change| match change {
+            FileChange::CreateFolder { path }
+                if required_paths.iter().any(|required| {
+                    required
+                        .strip_prefix(path)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                }) => Some(change_id(change)),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let allowed_change_ids = plan
+        .required_change_ids
+        .union(&required_folder_ids)
+        .cloned()
+        .collect::<HashSet<_>>();
     let excluded = plan
         .preview
         .changes
         .iter()
-        .filter(|change| !plan.required_change_ids.contains(&change.id))
+        .filter(|change| {
+            !plan.required_change_ids.contains(&change.id)
+                && !required_folder_ids.contains(&change.id)
+        })
         .map(|change| change.id.clone())
         .collect::<Vec<_>>();
     let selection = select_pack_changes(plan, &excluded)?;
-    if selection.changes.len() != 2 || !selection.hash_deletions.is_empty() {
-        return Err("更新器专用包必须且只能包含版本化 EXE 与启动清单".to_owned());
+    if !selection.hash_deletions.is_empty()
+        || selection
+            .changes
+            .iter()
+            .any(|change| !allowed_change_ids.contains(&change_id(change)))
+    {
+        return Err("更新器专用包只能包含版本化 EXE、启动清单与必需父目录".to_owned());
     }
     Ok(selection)
 }
@@ -1235,9 +1268,21 @@ mod tests {
         );
         let startlist = update_file(UPDATER_STARTLIST_PATH, "list");
         let unrelated = update_file(".minecraft/mods/example.jar", "mod");
+        let updater_folder = FileChange::CreateFolder {
+            path: ".minecraft/autoupdate".to_owned(),
+        };
+        let unrelated_folder = FileChange::CreateFolder {
+            path: ".minecraft/config".to_owned(),
+        };
         let binary_id = change_id(&binary);
         let startlist_id = change_id(&startlist);
-        let changes = vec![binary, unrelated, startlist];
+        let changes = vec![
+            binary,
+            unrelated,
+            updater_folder,
+            unrelated_folder,
+            startlist,
+        ];
         let previews = changes
             .iter()
             .map(|change| preview_change(change, &HashSet::new(), false))
@@ -1268,12 +1313,13 @@ mod tests {
         };
 
         let selection = select_updater_self_update(plan).unwrap();
-        assert_eq!(selection.changes.len(), 2);
+        assert_eq!(selection.changes.len(), 3);
         assert!(selection
             .changes
             .iter()
             .all(|change| change_path(change).is_some_and(|path| {
                 path == UPDATER_STARTLIST_PATH
+                    || path == ".minecraft/autoupdate"
                     || path.starts_with(
                         ".minecraft/autoupdate/AutoUpdateClient-aaaaaaaaaaaaaaaa.exe",
                     )
@@ -1348,7 +1394,7 @@ mod tests {
         assert_eq!(update_paths.last(), Some(&UPDATER_STARTLIST_PATH));
         assert_eq!(plan.required_change_ids.len(), 2);
 
-        let selection = select_pack_changes(plan, &[]).unwrap();
+        let selection = select_updater_self_update(plan).unwrap();
         assert_eq!(
             task_pack_selected(
                 "v1".to_owned(),
