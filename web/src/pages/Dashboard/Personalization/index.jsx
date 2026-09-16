@@ -96,6 +96,9 @@ const Index = () => {
         headline: profile.headline,
         subtitle: profile.subtitle,
         footer: profile.footer,
+        headlineColor: profile.headlineColor,
+        subtitleColor: profile.subtitleColor,
+        footerColor: profile.footerColor,
         launchLabelOffsetX: profile.launchLabelOffsetX,
         theme: profile.theme
       })
@@ -143,7 +146,7 @@ const Index = () => {
                       <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg text-sm font-extrabold text-white" style={{background: theme.accent}}>
                         {iconPreview ? <img src={iconPreview} alt="" className="h-full w-full object-cover"/> : 'UP'}
                       </div>
-                      <div><div className="text-2xl font-bold">{profile.headline}</div><div className="mt-1 text-sm" style={{color: theme.muted}}>{profile.subtitle}</div></div>
+                      <div><div className="text-2xl font-bold" style={{color: profile.headlineColor}}>{profile.headline}</div><div className="mt-1 text-sm" style={{color: profile.subtitleColor}}>{profile.subtitle}</div></div>
                     </div>
                     <div className="rounded-full px-3 py-2 text-xs font-bold" style={{background: theme.accentSoft, color: theme.accent}}>正在下载</div>
                   </div>
@@ -157,7 +160,7 @@ const Index = () => {
                     <div className="font-semibold">更新日志</div>
                     <div className="mt-3 h-[calc(100%-32px)] rounded-md border p-4 text-sm leading-7" style={{background: theme.logBackground, borderColor: theme.border}}>修复客户端显示问题<br/>优化自动更新体验<br/>调整资源加载流程</div>
                   </div>
-                  <div className="text-center text-xs" style={{color: theme.muted}}>{profile.footer}</div>
+                  <div className="text-center text-xs" style={{color: profile.footerColor}}>{profile.footer}</div>
                 </div>
               </div>
             </section>
@@ -165,9 +168,9 @@ const Index = () => {
             <section className="space-y-6 rounded-lg border border-[#dce7e4] bg-white p-6 dark:border-[#2c403c] dark:bg-[#141d1b]">
               <div className="space-y-4">
                 <div className="text-sm font-semibold">显示内容</div>
-                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">主标题<Input className="mt-2" value={profile.headline} maxLength={80} onChange={event => updateProfile('headline', event.target.value)}/></label>
-                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">副标题<Input className="mt-2" value={profile.subtitle} maxLength={80} onChange={event => updateProfile('subtitle', event.target.value)}/></label>
-                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]">底部提示<Input className="mt-2" value={profile.footer} maxLength={80} onChange={event => updateProfile('footer', event.target.value)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>主标题</span><ColorPicker disabledAlpha size="small" value={profile.headlineColor} onChange={color => updateProfile('headlineColor', color.toHexString())}/></span><Input className="mt-2" value={profile.headline} maxLength={80} onChange={event => updateProfile('headline', event.target.value)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>副标题</span><ColorPicker disabledAlpha size="small" value={profile.subtitleColor} onChange={color => updateProfile('subtitleColor', color.toHexString())}/></span><Input className="mt-2" value={profile.subtitle} maxLength={80} onChange={event => updateProfile('subtitle', event.target.value)}/></label>
+                <label className="block text-xs text-[#6b7f7b] dark:text-[#91a7a1]"><span className="flex items-center justify-between"><span>底部提示</span><ColorPicker disabledAlpha size="small" value={profile.footerColor} onChange={color => updateProfile('footerColor', color.toHexString())}/></span><Input className="mt-2" value={profile.footer} maxLength={80} onChange={event => updateProfile('footer', event.target.value)}/></label>
                 <label className="flex items-center justify-between text-xs text-[#6b7f7b] dark:text-[#91a7a1]">启动文字水平偏移<InputNumber min={-24} max={24} value={profile.launchLabelOffsetX} onChange={value => updateProfile('launchLabelOffsetX', value ?? 0)}/></label>
               </div>
               <div className="h-px bg-[#e5ecea] dark:bg-[#2c403c]"/>

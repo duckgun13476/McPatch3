@@ -19,6 +19,9 @@ pub struct UpdateProfileRequest {
     headline: String,
     subtitle: String,
     footer: String,
+    headline_color: Option<String>,
+    subtitle_color: Option<String>,
+    footer_color: Option<String>,
     launch_label_offset_x: i8,
     theme: ThemeColors,
 }
@@ -48,6 +51,15 @@ pub async fn api_save(
     profile.headline = payload.headline;
     profile.subtitle = payload.subtitle;
     profile.footer = payload.footer;
+    if let Some(color) = payload.headline_color {
+        profile.headline_color = color;
+    }
+    if let Some(color) = payload.subtitle_color {
+        profile.subtitle_color = color;
+    }
+    if let Some(color) = payload.footer_color {
+        profile.footer_color = color;
+    }
     profile.launch_label_offset_x = payload.launch_label_offset_x;
     profile.theme = payload.theme;
     let profile = match profile.validate() {
