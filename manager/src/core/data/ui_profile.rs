@@ -170,11 +170,24 @@ impl UiProfile {
 }
 
 pub fn ensure_ui_profile(path: &Path) -> std::io::Result<()> {
-    if !path.exists() {
-        let data = serde_json::to_vec_pretty(&UiProfile::default())?;
-        std::fs::write(path, data)?;
+    let profile = if path.exists() {
+        let text = std::fs::read_to_string(path)?;
+        serde_json::from_str::<UiProfile>(&text)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+            .validate()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+    } else {
+        UiProfile::default()
+    };
+
+    let data = serde_json::to_vec_pretty(&profile)?;
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&temporary, data)?;
+    #[cfg(target_os = "windows")]
+    if path.exists() {
+        std::fs::remove_file(path)?;
     }
-    Ok(())
+    std::fs::rename(temporary, path)
 }
 
 fn valid_text(value: &str) -> bool {
@@ -208,6 +221,30 @@ mod tests {
         assert_eq!(profile.subtitle_color, "#445566");
         assert_eq!(profile.footer_color, "#445566");
         assert_eq!(profile.traffic_color, "#112233");
+    }
+
+    #[test]
+    fn ensure_migrates_old_profile_with_new_default_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "mcupdate-ui-profile-migration-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            r##"{"schema":1,"headline":"A","subtitle":"B","footer":"C","icon":"","backgroundImage":"","theme":{"accent":"#147d67","text":"#112233","muted":"#445566"}}"##,
+        )
+        .unwrap();
+
+        ensure_ui_profile(&path).unwrap();
+
+        let stored = std::fs::read_to_string(&path).unwrap();
+        let migrated: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(migrated["trafficColor"], "#112233");
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
