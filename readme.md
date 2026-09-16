@@ -1,11 +1,24 @@
-# MCUpdate
+# MCUpdate / McPatch3
 
-MCUpdate 是由 Pink_Cats 维护的 Minecraft 客户端自动更新管理端，fork 自 McPatch2。
-本仓库包含管理端、更新协议服务和 WebUI；在保留 McPatch2 协议兼容性的基础上，持续维护更新预览、安全删除、外部下载源和客户端初始化等功能。
+MCUpdate 是由 Pink_Cats 维护的 Minecraft 客户端自动更新系统，fork 自 McPatch2。
+本仓库同时包含管理端、WebUI、Windows 更新器和 Java Loader；在保留 McPatch2
+协议兼容性的基础上，持续维护更新预览、安全删除、外部下载源、客户端初始化、
+更新器自更新和可恢复错误提示等功能。
 
-感谢 McPatch2 原作者及贡献者提供的上游实现。本项目继续遵循仓库内的开源许可证。
+感谢 McPatch2 与 Mcpatch2RustClient 的原作者及贡献者。各组件继续遵循其目录内
+保留的开源许可证。
 
-## Crates 说明
+## 仓库结构
+
+| 路径 | 用途 |
+| --- | --- |
+| `manager/` | Rust 管理端、更新协议服务和内置 WebUI 服务 |
+| `web/` | React 管理界面 |
+| `xtask/` | 管理端构建任务 |
+| `updater-client/` | Windows Rust 自动更新器，保留独立 Cargo 工作区与历史 |
+| `loader/` | Java Loader，负责安全选择、回退和轮换更新器 EXE |
+
+## 管理端 Crates
 
 | 名称                   | 用途                                                         |
 | ---------------------- | ------------------------------------------------------------ |
@@ -18,6 +31,13 @@ MCUpdate 是由 Pink_Cats 维护的 Minecraft 客户端自动更新管理端，f
 | ----------------------------------- | ------------------------------------ |
 | `cargo dev`                          | 开发场景下，启动管理端程序进行测试           |
 | `cargo ci`                            | 自动构建场景下，打包管理端 |
+
+其他组件保持自己的构建入口：
+
+```text
+cd updater-client && cargo test --workspace --locked
+cd loader && ./gradlew selfUpdateRegression shadowJar
+```
 
 ### 一次性精确哈希删除
 
