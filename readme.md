@@ -39,6 +39,18 @@ cd updater-client && cargo test --workspace --locked
 cd loader && ./gradlew selfUpdateRegression shadowJar
 ```
 
+## 发布
+
+推送普通分支只更新源码，不会发布二进制。推送 `v*` tag 后，GitHub Actions 会分别
+测试并构建 Linux 管理端、Windows 自动更新器和 Java Loader；只有三个构建全部成功，
+才会创建对应的 GitHub Release，并根据上一个 tag 自动生成更新日志。Release 固定只含：
+
+- `MCUpdate-Server-<tag>-linux-x86_64`
+- `AutoUpdateClient-<tag>.exe`
+- `Loader-<tag>.jar`
+
+首次统一发布使用项目当前版本 `v1.0.0`；后续版本只需提交代码并推送新的 tag。
+
 ### 一次性精确哈希删除
 
 自动化发布可以在不修改 `pending-changes.json` 的情况下，将精确路径删除规则仅加入本次更新包：
