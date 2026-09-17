@@ -123,6 +123,10 @@ jobs:
     needs: [server, updater, loader]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: release
@@ -135,8 +139,30 @@ jobs:
           if ($files.Count -ne 3) { throw "Expected exactly three release files, found $($files.Count)" }
           $files | ForEach-Object { "{0} {1}" -f $_.Length, $_.Name }
 
+      - name: Build release notes
+        shell: pwsh
+        run: |
+          $explicit = ".github/release-notes/$env:GITHUB_REF_NAME.md"
+          if (Test-Path -LiteralPath $explicit) {
+            Copy-Item -LiteralPath $explicit -Destination release-notes.md
+            exit 0
+          }
+
+          $tags = @(git tag --sort=-version:refname)
+          $previous = $tags | Where-Object { $_ -ne $env:GITHUB_REF_NAME } | Select-Object -First 1
+          $range = if ($previous) { "$previous..HEAD" } else { "HEAD" }
+          $commits = @(git log $range --first-parent --no-merges --pretty=format:'- %s (`%h`)')
+          if ($commits.Count -eq 0) { $commits = @('- Maintenance release') }
+          @(
+            "# MCUpdate $env:GITHUB_REF_NAME"
+            ""
+            "## 更新内容"
+            ""
+            $commits
+          ) | Set-Content -LiteralPath release-notes.md -Encoding utf8
+
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
-          generate_release_notes: true
+          body_path: release-notes.md
           fail_on_unmatched_files: true
