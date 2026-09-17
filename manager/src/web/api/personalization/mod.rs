@@ -121,6 +121,9 @@ pub async fn api_upload_image(
     } else {
         profile.background_image = BACKGROUND_ASSET_PATH.to_owned();
     }
+    if let Err(error) = profile.refresh_asset_hashes(&state.apppath.public_dir) {
+        return PublicResponseBody::<UiProfile>::err(&format!("计算图片哈希失败：{error}"));
+    }
     if let Err(error) = save_profile(&state, &profile).await {
         return PublicResponseBody::<UiProfile>::err(&error);
     }
@@ -142,8 +145,10 @@ pub async fn api_remove_image(
     };
     if payload.kind == "icon" {
         profile.icon.clear();
+        profile.icon_sha256.clear();
     } else {
         profile.background_image.clear();
+        profile.background_sha256.clear();
     }
     if let Err(error) = save_profile(&state, &profile).await {
         return PublicResponseBody::<UiProfile>::err(&error);

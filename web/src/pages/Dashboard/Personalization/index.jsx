@@ -11,7 +11,7 @@ import {
 } from "@/api/personalization.js";
 import {miscVersionListRequest} from "@/api/misc.js";
 import {taskPackUpdaterRequest} from "@/api/task.js";
-import {nextPatchVersion} from "@/utils/version.js";
+import {nextVersionForHistory} from "@/utils/version.js";
 import {showFileSize} from "@/utils/tool.js";
 
 const themeFields = [
@@ -141,7 +141,7 @@ const Index = () => {
     try {
       const versions = await miscVersionListRequest()
       if (versions?.code !== 1) throw new Error(versions?.msg || '读取版本列表失败')
-      const label = nextPatchVersion(versions.data?.versions?.[0]?.label)
+      const label = nextVersionForHistory(versions.data?.versions?.map(({label}) => label))
       if (!label) throw new Error('无法生成下一个版本号')
       const uploaded = await updaterUploadRequest(updaterFile)
       if (uploaded?.code !== 1) throw new Error(uploaded?.msg || '上传更新器失败')
