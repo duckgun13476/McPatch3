@@ -1,81 +1,142 @@
-name: Release Manager
+name: Release MCUpdate
 
 on:
   push:
     tags:
       - "v*"
-# on:
-#   - push
 
 permissions:
   contents: write
-  pages: read
 
-env:
-  CARGO_TERM_COLOR: always
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            rustc-target: x86_64-pc-windows-msvc
-          # - os: ubuntu-latest
-          #   rustc-target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            rustc-target: x86_64-unknown-linux-musl
-    runs-on: ${{ matrix.os }}
-    env:
-      rust-version: '1.83'
+  server:
+    name: Build Linux server
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # - name: Install dependencies for Linux
-      #   if: ${{ runner.os == 'Linux' }}
-      #   run: |-
-      #     sudo apt install libssl-dev
-
-      - name: Install dependencies for Linux musl
-        if: ${{ runner.os == 'Linux' && contains(matrix.rustc-target, 'musl') }}
-        run: |-
-          sudo apt install musl-tools
-          sudo apt install musl-dev
-      
-      - name: Setup Nodejs
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: web/package-lock.json
-      
-      - name: Build web pages
+
+      - name: Test and build WebUI
         working-directory: web
-        run: |-
+        run: |
           npm ci
+          npm test
           npm run build
 
-      - name: Cargo build
-        env:
-          MP_RUSTC_TARGET: ${{ matrix.rustc-target }}
-        run: |-
-          rustup update ${{ env.rust-version }} && rustup default ${{ env.rust-version }}
-          rustup target add ${{ matrix.rustc-target }}
-          cargo ci manager
-      
-      - name: Release
-        uses: softprops/action-gh-release@v2
+      - name: Install Rust 1.83 and musl target
+        run: |
+          rustup toolchain install 1.83 --profile minimal --target x86_64-unknown-linux-musl
+          rustup default 1.83
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools musl-dev
+
+      - name: Test and build bundled server
+        run: |
+          cargo test --locked --package manager
+          cargo build --release --locked --package manager --features bundle-webpage --target x86_64-unknown-linux-musl
+          mkdir -p release
+          cp target/x86_64-unknown-linux-musl/release/manager "release/MCUpdate-Server-${GITHUB_REF_NAME}-linux-x86_64"
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: target/dist/*
-      
-      # - name: Distribute
-      #   uses: bxb100/action-upload@main
-      #   with:
-      #     provider: webdav
-      #     provider_options: |
-      #       endpoint=${{ secrets.webdav_endpoint }}
-      #       username=${{ secrets.webdav_username }}
-      #       password=${{ secrets.webdav_password }}
-      #       root=${{ secrets.webdav_root_manager }}
-      #     include: 'target/dist/**'
+          name: server
+          path: release/*
+          if-no-files-found: error
+
+  updater:
+    name: Build Windows updater
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: updater-client
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.83
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.83 --profile minimal --target x86_64-pc-windows-msvc
+          rustup default 1.83
+
+      - name: Test and build updater
+        shell: pwsh
+        run: |
+          cargo test --workspace --locked
+          cargo build --release --locked --package client --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item -LiteralPath target/x86_64-pc-windows-msvc/release/client.exe -Destination "release/AutoUpdateClient-$env:GITHUB_REF_NAME.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater
+          path: updater-client/release/*
+          if-no-files-found: error
+
+  loader:
+    name: Build Java loader
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: loader
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            loader/*.gradle*
+            loader/gradle/wrapper/gradle-wrapper.properties
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and build loader
+        run: ./gradlew --no-daemon selfUpdateRegression shadowJar
+
+      - name: Stage loader
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $jars = @(Get-ChildItem -LiteralPath build/libs -Filter 'loader-*.jar')
+          if ($jars.Count -ne 1) { throw "Expected one loader jar, found $($jars.Count)" }
+          Copy-Item -LiteralPath $jars[0].FullName -Destination "release/Loader-$env:GITHUB_REF_NAME.jar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loader
+          path: loader/release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [server, updater, loader]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Verify exactly three release files
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath release -File)
+          if ($files.Count -ne 3) { throw "Expected exactly three release files, found $($files.Count)" }
+          $files | ForEach-Object { "{0} {1}" -f $_.Length, $_.Name }
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
