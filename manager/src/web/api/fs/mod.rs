@@ -36,6 +36,14 @@ fn resolve_workspace_path(
         return Err("path must not be empty".to_owned());
     }
 
+    let bytes = normalized.as_bytes();
+    let has_windows_drive_prefix = bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':';
+    if normalized.starts_with('/') || has_windows_drive_prefix {
+        return Err("path must stay inside workspace".to_owned());
+    }
+
     let relative = Path::new(&normalized);
     if relative
         .components()
@@ -94,6 +102,8 @@ mod tests {
             "mods/../config.toml",
             "/etc/passwd",
             "C:\\Windows\\win.ini",
+            "C:/Windows/win.ini",
+            "C:relative.txt",
             "./mods",
         ] {
             assert!(resolve_workspace_path(&workspace, unsafe_path, false).is_err());
