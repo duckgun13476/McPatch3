@@ -17,4 +17,25 @@ export const nextPatchVersion = (label) => {
   return `${prefix}${nextPatch}`
 }
 
+export const nextVersionForHistory = (labels = []) => {
+  const normalizedLabels = Array.isArray(labels)
+    ? labels.filter((label) => typeof label === 'string' && label !== '')
+    : []
+  const existingLabels = new Set(normalizedLabels)
+  const incremented = nextPatchVersion(normalizedLabels[0])
+
+  if (incremented && !existingLabels.has(incremented)) {
+    return incremented
+  }
+
+  for (let patch = 1; patch <= existingLabels.size + 1; patch += 1) {
+    const candidate = `v0.0.${patch}`
+    if (!existingLabels.has(candidate)) {
+      return candidate
+    }
+  }
+
+  return ''
+}
+
 export const hasVersionWhitespace = (label) => /\s/.test(label)

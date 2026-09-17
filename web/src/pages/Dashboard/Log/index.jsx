@@ -12,7 +12,7 @@ import {terminalStreamRequest} from "@/api/terminal.js";
 import {ArrowLeft, FileMinus2, Grid2X2, List, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Undo2, X} from "lucide-react";
 import {generateRandomStr, showFileSize, showTime} from "@/utils/tool.js";
 import {miscVersionListRequest} from "@/api/misc.js";
-import {hasVersionWhitespace, nextPatchVersion} from "@/utils/version.js";
+import {hasVersionWhitespace, nextVersionForHistory} from "@/utils/version.js";
 import {fsDiskInfoRequest, fsListRequest} from "@/api/fs.js";
 import FileBreadcrumb from "@/components/FileBreadcrumb/index.jsx";
 import FolderButtonGroup from "@/components/FolderButtonGroup/index.jsx";
@@ -463,7 +463,7 @@ const Index = () => {
             <Button size="large">同步 public 到下载源</Button>
           </Popconfirm>
           <Button type="primary" size="large" onClick={() => {
-            const nextVersion = nextPatchVersion(versionList[0]?.label)
+            const nextVersion = nextVersionForHistory(versionList.map(({label}) => label))
             if (nextVersion === '') {
               messageApi.error('无法从最新版本生成下一个版本号。')
               return
