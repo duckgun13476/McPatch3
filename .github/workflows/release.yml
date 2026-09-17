@@ -32,10 +32,10 @@ jobs:
           npm test
           npm run build
 
-      - name: Install Rust 1.83 and musl target
+      - name: Install Rust 1.88 and musl target
         run: |
-          rustup toolchain install 1.83 --profile minimal --target x86_64-unknown-linux-musl
-          rustup default 1.83
+          rustup toolchain install 1.88 --profile minimal --target x86_64-unknown-linux-musl
+          rustup default 1.88
           sudo apt-get update
           sudo apt-get install --yes musl-tools musl-dev
 
@@ -61,11 +61,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.83
+      - name: Install Rust 1.88
         shell: pwsh
         run: |
-          rustup toolchain install 1.83 --profile minimal --target x86_64-pc-windows-msvc
-          rustup default 1.83
+          rustup toolchain install 1.88 --profile minimal --target x86_64-pc-windows-msvc
+          rustup default 1.88
 
       - name: Test and build updater
         shell: pwsh
