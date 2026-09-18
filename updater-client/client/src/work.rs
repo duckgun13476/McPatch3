@@ -8,6 +8,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
 use tokio::io::AsyncWriteExt;
 
+use crate::changelog_history;
 use crate::common::file_hash::{calculate_hash_async, calculate_sha256_async};
 use crate::data::index_file::IndexFile;
 use crate::data::version_meta::ClientHashDeletion;
@@ -30,6 +31,7 @@ use crate::log::MessageLevel;
 use crate::network::Network;
 use crate::speed_sampler::SpeedCalculator;
 use crate::ui_profile;
+use crate::user_preferences::UserPreferences;
 use crate::utility::convert_bytes;
 use crate::utility::filename_ext::GetFileNamePart;
 use crate::utility::is_running_under_cargo;
@@ -259,6 +261,14 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
     let config = GlobalConfig::load(&exe_dir.join("mcpatch.yml")).await?;
     let base_dir = get_base_dir(params, &config).await?;
 
+    #[cfg(target_os = "windows")]
+    ui_cmd
+        .configure_preferences(
+            exe_dir.join("user-preferences.json"),
+            UserPreferences::load(&exe_dir.join("user-preferences.json")),
+        )
+        .await;
+
     // 根据配置显示或隐藏控制台窗口
     #[cfg(target_os = "windows")]
     crate::apply_console_visibility(config.show_console);
@@ -401,7 +411,11 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
 
     println!("latest: {}, current: {}", latest_version, current_version);
 
-    if latest_version != &current_version {
+    let update_required = latest_version != &current_version;
+    let mut current_update_changelog = String::new();
+    let mut current_update_log_count = 0_usize;
+
+    if update_required {
         if config.silent_mode {
             #[cfg(target_os = "windows")]
             ui_cmd.set_visible(true).await;
@@ -1097,38 +1111,67 @@ pub async fn work(params: &StartupParameter, ui_cmd: UiCmd<'_>) -> Result<(), Bu
             })?;
 
         // 2.弹出更新记录
-        let mut changelogs = "".to_owned();
-
-        let mut version_metas_rev = version_metas.iter().collect::<Vec<&FullVersionMeta>>();
-        version_metas_rev.reverse();
-
-        for meta in &version_metas_rev {
-            changelogs += &format!("## {}\n\n{}\n\n", meta.metadata.label, meta.metadata.logs);
-        }
-
-        log_info(format!("更新成功: \n{}", changelogs.trim()));
-
-        // 弹出更新记录窗口
-        #[cfg(target_os = "windows")]
-        {
-            let content = changelogs.trim().replace("\n", "\r\n");
-
-            if config.show_changelogs_message {
-                ui_cmd
-                    .show_changelog(
-                        config.changelogs_window_title.to_owned(),
-                        format!("已经从 {} 更新到 {}", current_version, latest_version),
-                        content,
-                    )
-                    .await;
-            }
-        }
+        current_update_log_count = version_metas.len();
+        current_update_changelog = changelog_history::markdown_from_current(
+            version_metas
+                .iter()
+                .map(|meta| (meta.metadata.label.clone(), meta.metadata.logs.clone())),
+        );
+        log_info(format!("更新成功: \n{}", current_update_changelog.trim()));
     } else {
         log_info("没有更新");
     }
 
+    let mut launch_after_completion = true;
+
+    #[cfg(target_os = "windows")]
+    {
+        let show_after_update = update_required && !ui_cmd.auto_launch_after_update();
+        let show_manual_history = !update_required && params.manual_history;
+        if config.show_changelogs_message && (show_after_update || show_manual_history) {
+            ui_cmd.set_label("正在加载完整更新历史".to_owned()).await;
+            let cache_file = exe_dir.join("changelog-history-cache.json");
+            let (content, entry_count) = match changelog_history::load_complete_history(
+                &mut network,
+                &server_versions,
+                &cache_file,
+            )
+            .await
+            {
+                Ok(history) => (history.markdown, history.entry_count),
+                Err(error) => {
+                    log_error(format!(
+                        "完整更新历史加载失败，使用本轮记录：{}",
+                        error.reason
+                    ));
+                    if current_update_changelog.is_empty() {
+                        (format!("## 更新历史暂时无法读取\n\n{}", error.reason), 0)
+                    } else {
+                        (current_update_changelog.clone(), current_update_log_count)
+                    }
+                }
+            };
+            let summary = if update_required {
+                format!(
+                    "已从 {} 更新到 {} · 共 {} 条历史记录",
+                    current_version, latest_version, entry_count
+                )
+            } else {
+                format!(
+                    "当前版本 {} · 共 {} 条历史记录",
+                    latest_version, entry_count
+                )
+            };
+            launch_after_completion = ui_cmd
+                .show_changelog(config.changelogs_window_title.to_owned(), summary, content)
+                .await;
+        } else if update_required && ui_cmd.auto_launch_after_update() {
+            log_info("已按玩家偏好跳过更新日志并直接启动客户端");
+        }
+    }
+
     // Launch the configured program after update completes
-    if !config.run_after_update.is_empty() {
+    if launch_after_completion && !config.run_after_update.is_empty() {
         log_info(format!(
             "Update complete, launching: {}",
             config.run_after_update

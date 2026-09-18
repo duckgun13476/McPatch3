@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::num::NonZeroIsize;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,6 +13,7 @@ use tokio::sync::Mutex;
 use crate::ui::MpscReceiver;
 use crate::ui::MpscSender;
 use crate::ui_profile::UiProfile;
+use crate::user_preferences::UserPreferences;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
 use winapi::shared::windef::RECT;
@@ -83,7 +85,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   #detail { min-height: 20px; margin-top: 8px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .track { height: 12px; margin-top: 18px; overflow: hidden; border-radius: 99px; background: var(--border); }
   #bar { width: 0%; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
-  #changelogCard { display: none; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
+  #changelogCard { display: none; height: 0; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
   .changelog-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; min-width: 0; }
   #changelogTitle { flex: 0 0 auto; margin: 0; font-size: 20px; }
   #changelogSummary { min-width: 0; color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -118,19 +120,26 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
   .dialog-action:hover { border-color: var(--accent); }
   .dialog-action.primary:hover { background: var(--accent-hover); }
   .dialog-action:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
-  .foot { margin-top: auto; color: var(--muted); font-size: 12px; text-align: center; }
+  .foot { flex: 0 0 auto; margin-top: auto; color: var(--muted); font-size: 12px; text-align: center; }
   .foot:not(.complete) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 44%); gap: 16px; align-items: center; }
   .foot:not(.complete) #footer { text-align: left; }
   #footer { color: var(--footer-text); }
   .foot.complete { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr); gap: 14px; align-items: center; }
   .foot.complete #footer { display: none; }
-  #footerActions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
-  .foot.complete #footerActions { display: flex; justify-content: flex-end; }
+  #footerActions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 18px; }
+  .foot.complete #footerActions { display: flex; justify-content: space-between; }
   .traffic-stat { width: 100%; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 10px; padding: 3px 16px; border-left: 2px solid var(--accent-soft); text-align: left; }
   .traffic-symbol { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); font-size: 20px; font-weight: 800; line-height: 1; }
   .traffic-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
   .traffic-label { flex: 0 0 auto; color: var(--traffic-text); font-size: 12px; font-weight: 700; }
   #trafficValue { min-width: 0; color: var(--traffic-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .auto-launch-option { display: none; flex: 0 0 auto; align-items: center; gap: 9px; color: var(--traffic-text); font-size: 13px; font-weight: 700; cursor: pointer; user-select: none; }
+  .foot.complete .auto-launch-option { display: flex; }
+  .auto-launch-option input { position: absolute; opacity: 0; pointer-events: none; }
+  .auto-launch-check { width: 18px; height: 18px; display: grid; place-items: center; border: 1.5px solid var(--border); border-radius: 5px; background: var(--surface); color: transparent; transition: border-color .15s ease, background .15s ease, color .15s ease; }
+  .auto-launch-check svg { width: 12px; height: 12px; display: block; }
+  .auto-launch-option input:checked + .auto-launch-check { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .auto-launch-option input:focus-visible + .auto-launch-check { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
   #completeButton { display: none; width: 100%; height: 52px; padding: 0 9px; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; border: 0; border-radius: 26px; background: var(--accent); color: #fff; font: 700 15px "Microsoft YaHei UI", "Segoe UI", sans-serif; cursor: pointer; }
   .foot.complete #completeButton { display: grid; }
   #completeButton::after { content: ""; width: 34px; height: 34px; }
@@ -172,7 +181,7 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     </section>
     <footer class="foot" id="footerBar">
       <div id="footer">请保持此窗口开启，完成后将自动启动客户端。</div>
-      <div id="footerActions" aria-label="更新信息"><div class="traffic-stat"><span class="traffic-symbol" aria-hidden="true">↓</span><div class="traffic-copy"><div class="traffic-label">本次下载</div><div id="trafficValue">无需下载</div></div></div></div>
+      <div id="footerActions" aria-label="更新信息"><div class="traffic-stat"><span class="traffic-symbol" aria-hidden="true">↓</span><div class="traffic-copy"><div class="traffic-label">本次下载</div><div id="trafficValue">无需下载</div></div></div><label class="auto-launch-option" title="以后有更新时，完成后跳过更新日志并直接启动客户端"><input id="autoLaunchAfterUpdate" type="checkbox"><span class="auto-launch-check" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 8.3l3.1 3.1L13 4.8"/></svg></span><span>下次更新完毕直接启动</span></label></div>
       <button id="completeButton" type="button"><span class="complete-icon" aria-hidden="true"><svg viewBox="0 0 34 34" focusable="false"><path fill="currentColor" d="M12.1 8.3C10.9 7.6 9.8 8.4 9.9 9.8C10.2 14.8 10.2 19.2 9.9 24.2C9.8 25.6 10.9 26.4 12.1 25.7C16.7 23.1 20.8 20.7 24.5 18.5C25.7 17.8 25.7 16.2 24.5 15.5C20.8 13.3 16.7 10.9 12.1 8.3Z"/></svg></span><span class="complete-label">启动</span></button>
     </footer>
   </main>
@@ -228,6 +237,9 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     document.getElementById('changelogContent').innerHTML = html;
     document.getElementById('footerBar').classList.add('complete');
   };
+  window.updatePreferences = ({ autoLaunchAfterUpdate }) => {
+    document.getElementById('autoLaunchAfterUpdate').checked = Boolean(autoLaunchAfterUpdate);
+  };
   window.showDialog = ({ title, content, retryable }) => {
     document.getElementById('progressCard').style.display = 'none';
     document.getElementById('changelogCard').style.display = 'none';
@@ -270,7 +282,10 @@ const UPDATE_PAGE: &str = r#"<!doctype html>
     if (event.button === 0) window.ipc.postMessage('drag');
   });
   document.getElementById('windowClose').addEventListener('click', () => window.requestAnimatedClose('close'));
-  document.getElementById('completeButton').addEventListener('click', () => window.requestAnimatedClose('close'));
+  document.getElementById('completeButton').addEventListener('click', () => window.requestAnimatedClose('launch'));
+  document.getElementById('autoLaunchAfterUpdate').addEventListener('change', event => {
+    window.ipc.postMessage('preference:auto-launch:' + (event.target.checked ? 'true' : 'false'));
+  });
   document.getElementById('dialogPrimary').addEventListener('click', () => {
     if (document.getElementById('dialogPrimary').textContent === '重试') {
       window.ipc.postMessage('dialog:yes');
@@ -343,6 +358,9 @@ enum Command {
 
     /// 设置服务端缓存的界面资料
     SetProfile(UiProfile),
+
+    /// 设置玩家持久化的更新器偏好
+    SetAutoLaunchAfterUpdate(bool),
 
     /// 设置窗口里的主文字
     SetLabel(String),
@@ -440,6 +458,8 @@ pub struct MainWindow {
     pending_changelog: RefCell<Option<ChangelogView>>,
     entry_animation_played: RefCell<bool>,
     close_animation_started: Arc<AtomicBool>,
+    auto_launch_after_update: Arc<AtomicBool>,
+    preferences_path: Arc<std::sync::Mutex<Option<PathBuf>>>,
 }
 
 impl MainWindow {
@@ -450,6 +470,8 @@ impl MainWindow {
         let webview_ready = Arc::new(AtomicBool::new(false));
         let visible_frame_generation = Arc::new(AtomicUsize::new(0));
         let close_animation_started = Arc::new(AtomicBool::new(false));
+        let auto_launch_after_update = Arc::new(AtomicBool::new(false));
+        let preferences_path = Arc::new(std::sync::Mutex::new(None));
 
         let data = Self {
             app_icon: Default::default(),
@@ -484,6 +506,8 @@ impl MainWindow {
             pending_changelog: RefCell::new(None),
             entry_animation_played: RefCell::new(false),
             close_animation_started,
+            auto_launch_after_update: auto_launch_after_update.clone(),
+            preferences_path: preferences_path.clone(),
         };
 
         let ui = Self::build_ui(data).unwrap();
@@ -505,6 +529,8 @@ impl MainWindow {
             webview_ready,
             visible_frame_generation,
             window_handle,
+            auto_launch_after_update,
+            preferences_path,
         };
 
         (cmd, ui)
@@ -621,6 +647,11 @@ impl MainWindow {
                         &detail,
                         *self.progress_value.borrow(),
                     );
+                }
+                Command::SetAutoLaunchAfterUpdate(enabled) => {
+                    self.auto_launch_after_update
+                        .store(enabled, Ordering::Release);
+                    self.update_preferences_webview();
                 }
                 Command::SetLabel(label) => {
                     *self.status.borrow_mut() = label;
@@ -871,34 +902,56 @@ impl MainWindow {
         let visible_frame_generation = self.visible_frame_generation.clone();
         let dialog_result = self.dialog_result.clone();
         let close_animation_started = self.close_animation_started.clone();
+        let auto_launch_after_update = self.auto_launch_after_update.clone();
+        let preferences_path = self.preferences_path.clone();
         let update_page = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
         let webview = WebViewBuilder::new()
             .with_html(update_page)
             .with_transparent(true)
-            .with_ipc_handler(move |request| match request.body().as_str() {
-                "ready" => webview_ready.store(true, Ordering::Release),
-                "visible" => {
-                    visible_frame_generation.fetch_add(1, Ordering::AcqRel);
-                }
-                "drag" => unsafe {
-                    ReleaseCapture();
-                    SendMessageW(hwnd as _, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
-                },
-                "close" => unsafe {
-                    PostMessageW(hwnd as _, WM_CLOSE, 0, 0);
-                },
-                "begin-close" => {
-                    if !close_animation_started.swap(true, Ordering::AcqRel) {
-                        MainWindow::animate_window_visual_async(hwnd as _, false, 15, 14);
+            .with_ipc_handler(move |request| {
+                let body = request.body();
+                if let Some(value) = body.strip_prefix("preference:auto-launch:") {
+                    let enabled = value == "true";
+                    auto_launch_after_update.store(enabled, Ordering::Release);
+                    if let Some(path) = preferences_path.lock().ok().and_then(|path| path.clone()) {
+                        if let Err(error) = (UserPreferences {
+                            auto_launch_after_update: enabled,
+                        })
+                        .save(&path)
+                        {
+                            crate::log::log_error(format!(
+                                "保存更新器偏好失败({path:?})，原因：{error}"
+                            ));
+                        }
                     }
+                    return;
                 }
-                "dialog:yes" => {
-                    let _ = dialog_result.try_send(true);
+
+                match body.as_str() {
+                    "ready" => webview_ready.store(true, Ordering::Release),
+                    "visible" => {
+                        visible_frame_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                    "drag" => unsafe {
+                        ReleaseCapture();
+                        SendMessageW(hwnd as _, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
+                    },
+                    "close" => unsafe {
+                        PostMessageW(hwnd as _, WM_CLOSE, 0, 0);
+                    },
+                    "begin-close" => {
+                        if !close_animation_started.swap(true, Ordering::AcqRel) {
+                            MainWindow::animate_window_visual_async(hwnd as _, false, 15, 14);
+                        }
+                    }
+                    "launch" | "dialog:yes" => {
+                        let _ = dialog_result.try_send(true);
+                    }
+                    "dialog:no" => {
+                        let _ = dialog_result.try_send(false);
+                    }
+                    _ => {}
                 }
-                "dialog:no" => {
-                    let _ = dialog_result.try_send(false);
-                }
-                _ => {}
             })
             .build(&parent);
 
@@ -916,6 +969,7 @@ impl MainWindow {
                 );
                 drop(detail);
                 drop(status);
+                self.update_preferences_webview();
                 self.render_pending_changelog();
             }
             Err(error) => {
@@ -970,6 +1024,17 @@ impl MainWindow {
             "html": &changelog.html,
         });
         let _ = webview.evaluate_script(&format!("window.showChangelog({payload});"));
+    }
+
+    fn update_preferences_webview(&self) {
+        let webview_slot = self.webview.borrow();
+        let Some(webview) = webview_slot.as_ref() else {
+            return;
+        };
+        let payload = serde_json::json!({
+            "autoLaunchAfterUpdate": self.auto_launch_after_update.load(Ordering::Acquire),
+        });
+        let _ = webview.evaluate_script(&format!("window.updatePreferences({payload});"));
     }
 
     fn render_dialog(&self, dialog: &DialogContent) -> bool {
@@ -1123,6 +1188,8 @@ pub struct MainUiCommand {
     webview_ready: Arc<AtomicBool>,
     visible_frame_generation: Arc<AtomicUsize>,
     window_handle: isize,
+    auto_launch_after_update: Arc<AtomicBool>,
+    preferences_path: Arc<std::sync::Mutex<Option<PathBuf>>>,
 }
 
 impl MainUiCommand {
@@ -1200,6 +1267,27 @@ impl MainUiCommand {
         this.notice_sender.notice();
     }
 
+    pub async fn configure_preferences(&self, path: PathBuf, preferences: UserPreferences) {
+        if let Ok(mut current_path) = self.preferences_path.lock() {
+            *current_path = Some(path);
+        }
+        self.auto_launch_after_update
+            .store(preferences.auto_launch_after_update, Ordering::Release);
+
+        let this = self.inner.lock().await;
+        this.sender
+            .send(Command::SetAutoLaunchAfterUpdate(
+                preferences.auto_launch_after_update,
+            ))
+            .await
+            .unwrap();
+        this.notice_sender.notice();
+    }
+
+    pub fn auto_launch_after_update(&self) -> bool {
+        self.auto_launch_after_update.load(Ordering::Acquire)
+    }
+
     pub async fn set_label(&self, text: String) {
         let this = self.inner.lock().await;
 
@@ -1254,19 +1342,22 @@ impl MainUiCommand {
         accepted
     }
 
-    pub async fn show_changelog(&self, title: String, summary: String, content: String) {
+    pub async fn show_changelog(&self, title: String, summary: String, content: String) -> bool {
+        {
+            let this = self.inner.lock().await;
+            this.sender
+                .send(Command::ShowChangelog {
+                    title,
+                    summary,
+                    content,
+                })
+                .await
+                .unwrap();
+            this.notice_sender.notice();
+        }
+        self.set_visible(true).await;
         let mut this = self.inner.lock().await;
-
-        this.sender
-            .send(Command::ShowChangelog {
-                title,
-                summary,
-                content,
-            })
-            .await
-            .unwrap();
-        this.notice_sender.notice();
-        let _ = this.receiver.recv().await;
+        this.receiver.recv().await.unwrap_or(false)
     }
 }
 
@@ -1294,6 +1385,14 @@ mod tests {
         assert!(!html.contains("javascript:"));
         assert!(!html.contains("alert('x')</script>"));
         assert!(html.contains("正常文本"));
+    }
+
+    #[test]
+    fn updater_page_exposes_persistent_auto_launch_choice() {
+        assert!(UPDATE_PAGE.contains("下次更新完毕直接启动"));
+        assert!(UPDATE_PAGE.contains("preference:auto-launch:"));
+        assert!(UPDATE_PAGE.contains("requestAnimatedClose('launch')"));
+        assert!(UPDATE_PAGE.contains(".auto-launch-option { display: none; flex: 0 0 auto; align-items: center; gap: 9px; color: var(--traffic-text);"));
     }
 
     #[test]

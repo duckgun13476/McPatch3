@@ -28,7 +28,7 @@ futures = "0.3"
 [target.'cfg(target_os = "windows")'.dependencies]
 nwg = {package = "native-windows-gui", version = "1.0.13"}
 nwd = {package = "native-windows-derive", version = "1.0.5"}
-winapi = {version = "0.3", features = ["winuser", "wingdi", "libloaderapi", "consoleapi", "processenv", "winbase", "wincon"]}
+winapi = {version = "0.3", features = ["winuser", "wingdi", "libloaderapi", "consoleapi", "processenv", "winbase", "wincon", "handleapi", "processthreadsapi", "tlhelp32"]}
 raw-window-handle = "0.6.2"
 wry = { version = "0.55.1", default-features = false, features = ["protocol"] }
 

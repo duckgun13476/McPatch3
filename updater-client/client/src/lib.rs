@@ -1,10 +1,12 @@
-pub mod error;
 pub mod bootstrap;
+pub mod changelog_history;
+pub mod error;
 pub mod global_config;
 pub mod log;
 pub mod network;
 pub mod speed_sampler;
 pub mod ui_profile;
+pub mod user_preferences;
 pub mod work;
 
 pub mod common;
@@ -34,6 +36,7 @@ pub struct StartupParameter {
     pub graphic_mode: bool,
     pub standalone_progress: bool,
     pub disable_log_file: bool,
+    pub manual_history: bool,
     // pub external_config_file: String,
 }
 
@@ -90,6 +93,7 @@ pub fn program() -> McpatchExitCode {
         graphic_mode: true,
         standalone_progress: true,
         disable_log_file: false,
+        manual_history: launched_manually(),
     };
 
     // 带ui的逻辑
@@ -135,6 +139,72 @@ pub fn program() -> McpatchExitCode {
     {
         // 开始执行更新逻辑
         return runtime.block_on(run(params, ()));
+    }
+}
+
+fn launched_manually() -> bool {
+    if std::env::args().any(|arg| arg == "--show-history") {
+        return true;
+    }
+    if std::env::args().any(|arg| arg == "--automatic") {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return parent_process_name().is_some_and(|name| name.eq_ignore_ascii_case("explorer.exe"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn parent_process_name() -> Option<String> {
+    use std::mem::size_of;
+
+    use winapi::shared::minwindef::FALSE;
+    use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+    use winapi::um::processthreadsapi::GetCurrentProcessId;
+    use winapi::um::tlhelp32::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let current_pid = GetCurrentProcessId();
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = None;
+        let mut has_entry = Process32FirstW(snapshot, &mut entry) != FALSE;
+        while has_entry {
+            if entry.th32ProcessID == current_pid {
+                let parent_pid = entry.th32ParentProcessID;
+                let mut parent: PROCESSENTRY32W = std::mem::zeroed();
+                parent.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                let mut has_parent = Process32FirstW(snapshot, &mut parent) != FALSE;
+                while has_parent {
+                    if parent.th32ProcessID == parent_pid {
+                        let parent_end = parent
+                            .szExeFile
+                            .iter()
+                            .position(|character| *character == 0)
+                            .unwrap_or(parent.szExeFile.len());
+                        found = Some(String::from_utf16_lossy(&parent.szExeFile[..parent_end]));
+                        break;
+                    }
+                    has_parent = Process32NextW(snapshot, &mut parent) != FALSE;
+                }
+                break;
+            }
+            has_entry = Process32NextW(snapshot, &mut entry) != FALSE;
+        }
+        CloseHandle(snapshot);
+        found
     }
 }
 
