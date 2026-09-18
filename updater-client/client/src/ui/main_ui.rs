@@ -394,11 +394,11 @@ pub struct MainWindow {
     #[nwg_resource(source_bin: Some(include_bytes!("../../app.ico")))]
     app_icon: nwg::Icon,
 
-    #[nwg_control(size: (1235, 720), title: "自动更新器", flags: "POPUP", center: true, topmost: false, icon: Some(&data.app_icon))]
+    #[nwg_control(size: (1280, 791), title: "自动更新器", flags: "POPUP", center: true, topmost: false, icon: Some(&data.app_icon))]
     #[nwg_events(OnInit: [MainWindow::init_webview], OnWindowClose: [MainWindow::close])]
     window: nwg::Window,
 
-    #[nwg_control(position: (0, 0), size: (1235, 720), text: "", background_color: Some([244, 247, 246]), flags: "VISIBLE")]
+    #[nwg_control(position: (0, 0), size: (1280, 791), text: "", background_color: Some([244, 247, 246]), flags: "VISIBLE")]
     placeholder_background: nwg::Label,
 
     #[nwg_resource(family: "Microsoft YaHei UI", size: 28, weight: 700)]
@@ -416,25 +416,25 @@ pub struct MainWindow {
     #[nwg_control(position: (40, 80), size: (900, 28), text: "安全检查并应用客户端更新", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
     placeholder_subtitle: nwg::Label,
 
-    #[nwg_control(position: (40, 176), size: (1120, 32), text: "更新状态", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
+    #[nwg_control(position: (40, 176), size: (1165, 32), text: "更新状态", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
     placeholder_phase: nwg::Label,
 
-    #[nwg_control(position: (40, 218), size: (1030, 42), text: "正在准备更新界面", font: Some(&data.placeholder_status_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
+    #[nwg_control(position: (40, 218), size: (1075, 42), text: "正在准备更新界面", font: Some(&data.placeholder_status_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
     placeholder_status: nwg::Label,
 
-    #[nwg_control(position: (1070, 218), size: (90, 42), text: "0%", font: Some(&data.placeholder_status_font), background_color: Some([244, 247, 246]), flags: "VISIBLE", h_align: HTextAlign::Right)]
+    #[nwg_control(position: (1115, 218), size: (90, 42), text: "0%", font: Some(&data.placeholder_status_font), background_color: Some([244, 247, 246]), flags: "VISIBLE", h_align: HTextAlign::Right)]
     placeholder_percent: nwg::Label,
 
-    #[nwg_control(position: (40, 272), size: (1120, 30), text: "下载尚未开始", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
+    #[nwg_control(position: (40, 272), size: (1165, 30), text: "下载尚未开始", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
     placeholder_detail: nwg::Label,
 
-    #[nwg_control(position: (40, 330), size: (1120, 18), range: 0..1000)]
+    #[nwg_control(position: (40, 330), size: (1165, 18), range: 0..1000)]
     placeholder_progress: nwg::ProgressBar,
 
-    #[nwg_control(position: (40, 652), size: (1120, 28), text: "正在准备更新页面，请稍候", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
+    #[nwg_control(position: (40, 723), size: (1165, 28), text: "正在准备更新页面，请稍候", font: Some(&data.placeholder_body_font), background_color: Some([244, 247, 246]), flags: "VISIBLE|ELIPSIS")]
     placeholder_hint: nwg::Label,
 
-    #[nwg_control(position: (1180, 8), size: (42, 34), text: "×", font: Some(&data.placeholder_status_font), flags: "VISIBLE")]
+    #[nwg_control(position: (1225, 8), size: (42, 34), text: "×", font: Some(&data.placeholder_status_font), flags: "VISIBLE")]
     #[nwg_events(OnButtonClick: [MainWindow::close])]
     placeholder_close: nwg::Button,
 
@@ -1417,7 +1417,7 @@ mod tests {
     fn updater_version_is_injected_into_the_visible_header() {
         assert!(UPDATE_PAGE.contains("id=\"appVersion\""));
         let rendered = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
-        assert!(rendered.contains("v0.0.3"));
+        assert!(rendered.contains("v0.0.4"));
         assert!(!rendered.contains("{{APP_VERSION}}"));
     }
 
