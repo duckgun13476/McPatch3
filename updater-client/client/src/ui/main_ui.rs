@@ -353,6 +353,9 @@ enum Command {
     /// 将已完成首帧合成的窗口移回原位置
     RevealVisible,
 
+    /// WebView 页面已注册完整的前端 API，可以安全重放延迟的界面状态。
+    WebViewReady,
+
     /// 设置窗口标题
     SetTitle(String),
 
@@ -443,6 +446,7 @@ pub struct MainWindow {
     notice: nwg::Notice,
 
     commands: RefCell<MpscReceiver<Command>>,
+    command_sender: MpscSender<Command>,
     dialog_result: MpscSender<bool>,
     webview: RefCell<Option<WebView>>,
     webview_ready: Arc<AtomicBool>,
@@ -491,6 +495,7 @@ impl MainWindow {
             placeholder_close: Default::default(),
             notice: Default::default(),
             commands: RefCell::new(commands),
+            command_sender: sender.clone(),
             dialog_result,
             webview: RefCell::new(None),
             webview_ready: webview_ready.clone(),
@@ -568,6 +573,7 @@ impl MainWindow {
                     );
                     drop(detail);
                     drop(status);
+                    self.render_pending_changelog();
 
                     let first_reveal = !*self.entry_animation_played.borrow();
                     self.set_placeholder_visible(first_reveal);
@@ -594,6 +600,7 @@ impl MainWindow {
                     }
                 }
                 Command::RevealVisible => {
+                    self.render_pending_changelog();
                     self.set_placeholder_visible(false);
                     if !*self.entry_animation_played.borrow() {
                         if let Some(webview) = self.webview.borrow().as_ref() {
@@ -635,6 +642,20 @@ impl MainWindow {
                 Command::SetTitle(title) => {
                     let _ = title;
                     self.window.set_text("自动更新器");
+                }
+                Command::WebViewReady => {
+                    let status = self.status.borrow();
+                    let detail = self.detail.borrow();
+                    self.update_webview(
+                        Self::phase_for_status(&status),
+                        &status,
+                        &detail,
+                        *self.progress_value.borrow(),
+                    );
+                    drop(detail);
+                    drop(status);
+                    self.update_preferences_webview();
+                    self.render_pending_changelog();
                 }
                 Command::SetProfile(profile) => {
                     *self.profile.borrow_mut() = profile;
@@ -738,7 +759,9 @@ impl MainWindow {
                         markdown: content.clone(),
                         html: render_markdown(&content),
                     });
-                    self.render_pending_changelog();
+                    if self.webview_ready.load(Ordering::Acquire) {
+                        self.render_pending_changelog();
+                    }
                 }
             }
         }
@@ -899,6 +922,8 @@ impl MainWindow {
         Self::apply_rounded_corners(hwnd as _);
         let parent = NativeWindowHandle(hwnd);
         let webview_ready = self.webview_ready.clone();
+        let command_sender = self.command_sender.clone();
+        let ready_notice = self.notice.sender();
         let visible_frame_generation = self.visible_frame_generation.clone();
         let dialog_result = self.dialog_result.clone();
         let close_animation_started = self.close_animation_started.clone();
@@ -928,7 +953,12 @@ impl MainWindow {
                 }
 
                 match body.as_str() {
-                    "ready" => webview_ready.store(true, Ordering::Release),
+                    "ready" => {
+                        webview_ready.store(true, Ordering::Release);
+                        if command_sender.try_send(Command::WebViewReady).is_ok() {
+                            ready_notice.notice();
+                        }
+                    }
                     "visible" => {
                         visible_frame_generation.fetch_add(1, Ordering::AcqRel);
                     }
@@ -1010,6 +1040,9 @@ impl MainWindow {
     }
 
     fn render_pending_changelog(&self) {
+        if !self.webview_ready.load(Ordering::Acquire) {
+            return;
+        }
         let webview_slot = self.webview.borrow();
         let Some(webview) = webview_slot.as_ref() else {
             return;
@@ -1023,7 +1056,11 @@ impl MainWindow {
             "summary": &changelog.summary,
             "html": &changelog.html,
         });
-        let _ = webview.evaluate_script(&format!("window.showChangelog({payload});"));
+        if let Err(error) = webview.evaluate_script(&format!("window.showChangelog({payload});")) {
+            crate::log::log_error(format!(
+                "更新日志界面渲染失败，将在窗口显示前重试，原因：{error}"
+            ));
+        }
     }
 
     fn update_preferences_webview(&self) {
@@ -1417,7 +1454,7 @@ mod tests {
     fn updater_version_is_injected_into_the_visible_header() {
         assert!(UPDATE_PAGE.contains("id=\"appVersion\""));
         let rendered = UPDATE_PAGE.replace("{{APP_VERSION}}", env!("CARGO_PKG_VERSION"));
-        assert!(rendered.contains("v0.0.4"));
+        assert!(rendered.contains("v0.0.5"));
         assert!(!rendered.contains("{{APP_VERSION}}"));
     }
 
